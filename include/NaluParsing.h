@@ -206,6 +206,7 @@ struct WallUserData : public UserData {
 
   bool wallFunctionApproach_;
   bool ablWallFunctionApproach_;
+  bool mlWallFunctionApproach_;
 
   bool isFsiInterface_;
 
@@ -221,6 +222,7 @@ struct WallUserData : public UserData {
       irradSpec_(false),
       wallFunctionApproach_(false),
       ablWallFunctionApproach_(false),
+      mlWallFunctionApproach_(false),
       isFsiInterface_(false) {}    
 };
 

@@ -44,7 +44,8 @@ public:
 
   LowMachEquationSystem (
     EquationSystems& equationSystems,
-    const bool elementContinuityEqs);
+    const bool elementContinuityEqs,
+    const bool machineLearnLOW);
   virtual ~LowMachEquationSystem();
   
   virtual void initialize();
@@ -86,7 +87,12 @@ public:
 
   void post_converged_work();
 
+  // temp hack for machine learning
+  void machine_learn_low();
+
   const bool elementContinuityEqs_; /* allow for mixed element/edge for continuity */
+  const bool machineLearnLOW_; /* hack for LOW machine learning activity */
+
   MomentumEquationSystem *momentumEqSys_;
   ContinuityEquationSystem *continuityEqSys_;
 

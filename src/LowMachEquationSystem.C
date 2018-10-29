@@ -48,6 +48,7 @@
 #include "ComputeMdotElemOpenPenaltyAlgorithm.h"
 #include "ComputeMdotNonConformalAlgorithm.h"
 #include "ComputeWallFrictionVelocityAlgorithm.h"
+#include "ComputeMLWallFrictionVelocityAlgorithm.h"
 #include "ComputeABLWallFrictionVelocityAlgorithm.h"
 #include "ConstantAuxFunction.h"
 #include "ContinuityGclNodeSuppAlg.h"
@@ -100,6 +101,8 @@
 #include "FixPressureAtNodeAlgorithm.h"
 #include "FixPressureAtNodeInfo.h"
 
+#include "OutputInfo.h"
+
 // template for kernels
 #include "AlgTraits.h"
 #include "kernel/KernelBuilder.h"
@@ -122,6 +125,7 @@
 #include "kernel/MomentumOpenAdvDiffElemKernel.h"
 #include "kernel/MomentumSymmetryElemKernel.h"
 #include "kernel/MomentumWallFunctionElemKernel.h"
+#include "kernel/MomentumMLWallFunctionElemKernel.h"
 
 // nso
 #include "nso/MomentumNSOElemKernel.h"
@@ -204,7 +208,7 @@
 
 // basic c++
 #include <vector>
-
+#include <fstream>
 
 namespace sierra{
 namespace nalu{
@@ -219,9 +223,11 @@ namespace nalu{
 //--------------------------------------------------------------------------
 LowMachEquationSystem::LowMachEquationSystem(
   EquationSystems& eqSystems,
-  const bool elementContinuityEqs)
+  const bool elementContinuityEqs,
+  const bool machineLearnLOW)
   : EquationSystem(eqSystems, "LowMachEOSWrap","low_mach_type"),
     elementContinuityEqs_(elementContinuityEqs),
+    machineLearnLOW_(machineLearnLOW),
     density_(NULL),
     viscosity_(NULL),
     dualNodalVolume_(NULL),
@@ -884,6 +890,189 @@ LowMachEquationSystem::post_converged_work()
   
   // output mass closure
   continuityEqSys_->computeMdotAlgDriver_->provide_output();
+
+  // output tau wall
+  if ( machineLearnLOW_ ) 
+    machine_learn_low();
+}
+
+//--------------------------------------------------------------------------
+//-------- machine_learn_low -----------------------------------------------
+//--------------------------------------------------------------------------
+void
+LowMachEquationSystem::machine_learn_low()
+{
+  const double currentTime = realm_.get_current_time();
+  const int timeStepCount = realm_.get_time_step_count();
+  const int modStep = timeStepCount - realm_.outputInfo_->outputStart_;
+  
+  const bool isOutput 
+    = (timeStepCount >= realm_.outputInfo_->outputStart_ && modStep % realm_.outputInfo_->outputFreq_ == 0);
+  
+  if ( isOutput ) {
+
+    stk::mesh::MetaData &meta_data = realm_.meta_data();
+    stk::mesh::BulkData &bulk_data = realm_.bulk_data();
+    const int nDim = meta_data.spatial_dimension();
+    
+    int numPlaces = static_cast<int>(std::log10(NaluEnv::self().pSize_-1)+1);
+    std::stringstream paddedRank;
+    paddedRank << std::setw(numPlaces) << std::setfill('0') << NaluEnv::self().parallel_rank();
+    
+    std::string parallelLogName =
+      "tau_wall." + std::to_string(NaluEnv::self().pSize_) + "." + paddedRank.str();
+    
+    std::ofstream myfile;
+    myfile.open(parallelLogName.c_str(), std::ofstream::app);
+
+    myfile << "# Current Time " << currentTime << std::endl;
+    myfile << "# yp, ux, uy, uz, nx, ny, nz, tau_x, tau_y, tau_z, tau_wall" << std::endl;
+
+    // extract fields
+    ScalarFieldType *density = meta_data.get_field<ScalarFieldType>(stk::topology::NODE_RANK, "density");
+    VectorFieldType *velocity = meta_data.get_field<VectorFieldType>(stk::topology::NODE_RANK, "velocity");
+    GenericFieldType *wallFrictionVelocityBip = meta_data.get_field<GenericFieldType>(meta_data.side_rank(), "wall_friction_velocity_bip");
+    GenericFieldType *wallNormalDistanceBip = meta_data.get_field<GenericFieldType>(meta_data.side_rank(), "wall_normal_distance_bip");
+    GenericFieldType *exposedAreaVec = meta_data.get_field<GenericFieldType>(meta_data.side_rank(), "exposed_area_vector");
+    
+    // fixed size
+    std::vector<double> uBip(nDim);
+    std::vector<double> normal(nDim);
+    std::vector<double> uhat(nDim);
+    std::vector<double> uparallel(nDim);
+    
+    // to gather
+    std::vector<double> ws_velocity;
+    std::vector<double> ws_density;
+    std::vector<double> ws_face_shape_function;
+
+    // selector
+    stk::mesh::Selector s_locally_owned = meta_data.locally_owned_part()
+      & stk::mesh::selectField(*wallNormalDistanceBip) 
+      & stk::mesh::selectField(*wallFrictionVelocityBip);
+
+    stk::mesh::BucketVector const& face_buckets =
+      realm_.get_buckets( meta_data.side_rank(), s_locally_owned );
+
+    // start the bucket loop
+    for ( stk::mesh::BucketVector::const_iterator ib = face_buckets.begin();
+          ib != face_buckets.end() ; ++ib ) {
+      stk::mesh::Bucket & b = **ib ;
+      
+      // extract face master element for this bucket
+      MasterElement *meFC = sierra::nalu::MasterElementRepo::get_surface_master_element(b.topology());
+      const int nodesPerFace = meFC->nodesPerElement_;
+      const int numScsBip = meFC->numIntPoints_;
+
+      // resize
+      ws_velocity.resize(nodesPerFace*nDim);
+      ws_density.resize(nodesPerFace);
+      ws_face_shape_function.resize(numScsBip*nodesPerFace);
+    
+      // extract shape functions
+      if ( realm_.realmUsesEdges_ )
+        meFC->shifted_shape_fcn(&ws_face_shape_function[0]);
+      else
+        meFC->shape_fcn(&ws_face_shape_function[0]);
+
+      const stk::mesh::Bucket::size_type length   = b.size();
+      
+      for ( stk::mesh::Bucket::size_type k = 0 ; k < length ; ++k ) {
+        
+        // get face
+        stk::mesh::Entity face = b[k];
+        
+        //======================================
+        // gather nodal data off of face
+        //======================================
+        stk::mesh::Entity const * face_node_rels = bulk_data.begin_nodes(face);
+        for ( int ni = 0; ni < nodesPerFace; ++ni ) {
+          stk::mesh::Entity node = face_node_rels[ni];
+          
+          // gather scalars
+          ws_density[ni] = *stk::mesh::field_data(*density, node);
+          
+          // gather vectors
+          double * uNp1 = stk::mesh::field_data(*velocity, node);
+          const int offSet = ni*nDim;
+          for ( int j=0; j < nDim; ++j ) {
+            ws_velocity[offSet+j] = uNp1[j];
+          }
+        }
+        
+        // pointer to face data
+        const double *areaVec = stk::mesh::field_data(*exposedAreaVec, face);
+        const double *yp = stk::mesh::field_data(*wallNormalDistanceBip, face);
+        const double *utau = stk::mesh::field_data(*wallFrictionVelocityBip, face);
+        
+        // loop over face nodes
+        for ( int ip = 0; ip < numScsBip; ++ip ) {
+          
+          const int ipNdim = ip*nDim;
+          const int ipNpf = ip*nodesPerFace;
+          
+          // zero out vector quantities
+          for ( int j = 0; j < nDim; ++j ) {
+            uBip[j] = 0.0;
+            uparallel[j] = 0.0;
+          }
+          
+          // interpolate to bip
+          double rhoBip = 0.0;
+          for ( int ic = 0; ic < nodesPerFace; ++ic ) {
+            const double r = ws_face_shape_function[ipNpf+ic];
+            rhoBip += r*ws_density[ic];
+            const int icNdim = ic*nDim;
+            for ( int j = 0; j < nDim; ++j ) {
+              uBip[j] += r*ws_velocity[icNdim+j];
+            }
+          }
+
+          // aMag
+          double aMag = 0.0;
+          double uMag = 0.0;
+          for ( int j = 0; j < nDim; ++j ) {
+            const double axj = areaVec[ipNdim+j];
+            aMag += axj*axj;
+            uMag += uBip[j]*uBip[j];
+          }
+          aMag = std::sqrt(aMag);
+          uMag = std::sqrt(uMag);
+
+          // form unit normals
+          for ( int j = 0; j < nDim; ++j ) {
+            normal[j] = areaVec[ipNdim+j]/aMag;
+            uhat[j] = uBip[j]/uMag;
+          }
+          
+          // start the lhs assembly
+          for ( int i = 0; i < nDim; ++i ) {
+            double ui = uhat[i]*(1.0 - normal[i]*normal[i]);
+            for ( int j = 0; j < nDim; ++j ) {
+              if ( i != j ) 
+                ui -= normal[i]*normal[j]*uhat[j];
+            }
+            uparallel[i] = ui;
+          }
+          
+          const double tauWall = utau[ip]*utau[ip]*rhoBip;
+        
+          myfile << yp[ip] << ",";
+          for ( int k = 0; k < nDim; ++k )
+            myfile << uBip[k] << ",";
+          for ( int k = 0; k < nDim; ++k )
+            myfile << normal[k] << ",";
+          for ( int k = 0; k < nDim; ++k )
+            myfile << uparallel[k]*tauWall << ",";
+          myfile << tauWall << std::endl;
+        }
+      }
+    }
+
+    myfile.close();
+
+  }
+
 }
 
 //==========================================================================
@@ -1679,8 +1868,9 @@ MomentumEquationSystem::register_wall_bc(
   WallUserData userData = wallBCData.userData_;
   const bool wallFunctionApproach = userData.wallFunctionApproach_;
   const bool ablWallFunctionApproach = userData.ablWallFunctionApproach_;
-  const bool anyWallFunctionActivated = wallFunctionApproach || ablWallFunctionApproach;
-
+  const bool mlWallFunctionApproach = userData.mlWallFunctionApproach_;
+  const bool anyWallFunctionActivated = wallFunctionApproach || ablWallFunctionApproach || mlWallFunctionApproach;
+  
   // push mesh part
   if ( !anyWallFunctionActivated )
     notProjectedPart_.push_back(part);
@@ -1800,6 +1990,12 @@ MomentumEquationSystem::register_wall_bc(
       =  &(meta_data.declare_field<GenericFieldType>(sideRank, "wall_normal_distance_bip"));
     stk::mesh::put_field_on_mesh(*wallNormalDistanceBip, *part, numScsBip, nullptr);
 
+    if ( mlWallFunctionApproach ) {
+      GenericFieldType *vectorTauWall
+        = &(meta_data.declare_field<GenericFieldType>(sideRank, "vector_tau_wall"));
+      stk::mesh::put_field_on_mesh(*vectorTauWall, *part, nDim*numScsBip, nullptr);
+    }
+    
     // create wallFunctionParamsAlgDriver
     if ( NULL == wallFunctionParamsAlgDriver_)
       wallFunctionParamsAlgDriver_ = new AlgorithmDriver(realm_);
@@ -1874,8 +2070,13 @@ MomentumEquationSystem::register_wall_bc(
       std::map<AlgorithmType, Algorithm *>::iterator it_utau =
         wallFunctionParamsAlgDriver_->algMap_.find(wfAlgType);
       if ( it_utau == wallFunctionParamsAlgDriver_->algMap_.end() ) {
-        ComputeWallFrictionVelocityAlgorithm *theUtauAlg =
-          new ComputeWallFrictionVelocityAlgorithm(realm_, part, realm_.realmUsesEdges_);
+        Algorithm  *theUtauAlg = NULL;
+        if ( mlWallFunctionApproach ) {
+          theUtauAlg = new ComputeMLWallFrictionVelocityAlgorithm(realm_, part, realm_.realmUsesEdges_);
+        }
+        else {
+          theUtauAlg = new ComputeWallFrictionVelocityAlgorithm(realm_, part, realm_.realmUsesEdges_);
+        }
         wallFunctionParamsAlgDriver_->algMap_[wfAlgType] = theUtauAlg;
       }
       else {
@@ -1896,10 +2097,17 @@ MomentumEquationSystem::register_wall_bc(
         auto& activeKernels = solverAlg->activeKernels_;
         
         if (solverAlgWasBuilt) {
-          build_face_topo_kernel_automatic<MomentumWallFunctionElemKernel>
-            (partTopo, *this, activeKernels, "momentum_wall_function",
-             realm_.bulk_data(), *realm_.solutionOptions_, dataPreReqs);
-          report_built_supp_alg_names();   
+          if ( mlWallFunctionApproach ) {
+            build_face_topo_kernel_automatic<MomentumMLWallFunctionElemKernel>
+              (partTopo, *this, activeKernels, "momentum_ml_wall_function",
+               realm_.bulk_data(), *realm_.solutionOptions_, dataPreReqs);
+          }
+          else {
+            build_face_topo_kernel_automatic<MomentumWallFunctionElemKernel>
+              (partTopo, *this, activeKernels, "momentum_wall_function",
+               realm_.bulk_data(), *realm_.solutionOptions_, dataPreReqs);
+          }
+            report_built_supp_alg_names();   
         }
       }
       else {
@@ -2306,7 +2514,7 @@ ContinuityEquationSystem::ContinuityEquationSystem(
   // error check
   if ( !elementContinuityEqs_ && !realm_.realmUsesEdges_ )
     throw std::runtime_error("If using the non-element-based continuity system, edges must be active at realm level");
-
+  
   // extract solver name and solver object
   std::string solverName = realm_.equationSystems_.get_solver_block_name("pressure");
   LinearSolver *solver = realm_.root()->linearSolvers_->create_solver(solverName, EQ_CONTINUITY);

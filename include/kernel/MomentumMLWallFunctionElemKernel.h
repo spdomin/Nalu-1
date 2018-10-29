@@ -5,8 +5,8 @@
 /*  directory structure                                                   */
 /*------------------------------------------------------------------------*/
 
-#ifndef MomentumWallFunctionElemKernel_h
-#define MomentumWallFunctionElemKernel_h
+#ifndef MomentumMLWallFunctionElemKernel_h
+#define MomentumMLWallFunctionElemKernel_h
 
 #include "kernel/Kernel.h"
 #include "FieldTypeDef.h"
@@ -26,15 +26,15 @@ class ElemDataRequests;
 /** Wall function approach momentum equation (velocity DOF)
  */
 template<typename BcAlgTraits>
-class MomentumWallFunctionElemKernel: public Kernel
+class MomentumMLWallFunctionElemKernel: public Kernel
 {
 public:
-  MomentumWallFunctionElemKernel(
+  MomentumMLWallFunctionElemKernel(
     const stk::mesh::BulkData&,
     const SolutionOptions&,
     ElemDataRequests&);
-  
-  virtual ~MomentumWallFunctionElemKernel();
+
+  virtual ~MomentumMLWallFunctionElemKernel();
 
   /** Execute the kernel within a Kokkos loop and populate the LHS and RHS for
    *  the linear solve
@@ -45,24 +45,19 @@ public:
     ScratchViews<DoubleType>&);
 
 private:
-  MomentumWallFunctionElemKernel() = delete;
+  MomentumMLWallFunctionElemKernel() = delete;
   
-  VectorFieldType *velocityNp1_{nullptr};
-  VectorFieldType *bcVelocity_{nullptr};
-  ScalarFieldType *density_{nullptr};
-  ScalarFieldType *viscosity_{nullptr};
   GenericFieldType *exposedAreaVec_{nullptr};
-  GenericFieldType *wallFrictionVelocityBip_{nullptr};
+  GenericFieldType *vectorTauWall_{nullptr};
   GenericFieldType *wallNormalDistanceBip_{nullptr};
+  ScalarFieldType *viscosity_{nullptr};
 
-  // turbulence model constants (constant over time and bc surfaces)
-  const double elog_;
-  const double kappa_;
-  const double yplusCrit_;
+  // include approximate LHS
+  const double lhsFac_;
 
   // Integration point to node mapping 
   const int *ipNodeMap_{nullptr};
-  
+
   // fixed scratch space
   AlignedViewType<DoubleType[BcAlgTraits::numFaceIp_][BcAlgTraits::nodesPerFace_]> vf_shape_function_{"vf_shape_function"};
 };
@@ -70,4 +65,4 @@ private:
 }  // nalu
 }  // sierra
 
-#endif /* MomentumWallFunctionElemKernel_h */
+#endif /* MomentumMLWallFunctionElemKernel_h */

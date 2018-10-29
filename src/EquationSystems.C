@@ -97,8 +97,10 @@ void EquationSystems::load(const YAML::Node & y_node)
 	  y_eqsys =  expect_map(y_system, "LowMachEOM", true);
           if (root()->debug()) NaluEnv::self().naluOutputP0() << "eqSys = LowMachEOM " << std::endl;
           bool elemCont = (realm_.realmUsesEdges_) ? false : true;
+          bool mlLOW = false;
           get_if_present_no_default(y_eqsys, "element_continuity_eqs", elemCont);
-          eqSys = new LowMachEquationSystem(*this, elemCont);
+          get_if_present_no_default(y_eqsys, "machine_learn_law_of_the_wall", mlLOW);
+          eqSys = new LowMachEquationSystem(*this, elemCont, mlLOW);
         }
         else if( expect_map(y_system, "ShearStressTransport", true) ) {
 	  y_eqsys =  expect_map(y_system, "ShearStressTransport", true);

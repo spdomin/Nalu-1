@@ -40,7 +40,8 @@ enum AlgorithmType{
    *
    * \sa FixPressureAtNodeAlgorithm
    */
-  REF_PRESSURE = 15
+  REF_PRESSURE = 15,
+  WALL_ML = 16
 };
 
 enum BoundaryConditionType{

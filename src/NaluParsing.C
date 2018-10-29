@@ -873,7 +873,13 @@ namespace YAML
     {
       wallData.wallFunctionApproach_ = node["use_abl_wall_function"].as<bool>();
       wallData.ablWallFunctionApproach_ =
-          node["use_abl_wall_function"].as<bool>();
+        node["use_abl_wall_function"].as<bool>();
+    }
+    if (node["use_ml_wall_function"])
+    {
+      wallData.wallFunctionApproach_ = node["use_ml_wall_function"].as<bool>();
+      wallData.mlWallFunctionApproach_ =
+        node["use_ml_wall_function"].as<bool>();
     }
     if (node["pressure"])
     {
