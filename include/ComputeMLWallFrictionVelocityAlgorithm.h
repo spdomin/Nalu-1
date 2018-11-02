@@ -54,7 +54,7 @@ public:
   ScalarFieldType *density_;
   ScalarFieldType *viscosity_;
   GenericFieldType *exposedAreaVec_;
-  GenericFieldType *vectorTauWall_;
+  GenericFieldType *vectorTauWallBip_;
   GenericFieldType *wallFrictionVelocityBip_;
   GenericFieldType *wallNormalDistanceBip_;
   ScalarFieldType *assembledWallNormalDistance_;

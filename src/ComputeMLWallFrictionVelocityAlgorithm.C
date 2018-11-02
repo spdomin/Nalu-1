@@ -58,7 +58,7 @@ ComputeMLWallFrictionVelocityAlgorithm::ComputeMLWallFrictionVelocityAlgorithm(
   density_ = meta_data.get_field<ScalarFieldType>(stk::topology::NODE_RANK, "density");
   viscosity_ = meta_data.get_field<ScalarFieldType>(stk::topology::NODE_RANK, "viscosity");
   exposedAreaVec_ = meta_data.get_field<GenericFieldType>(meta_data.side_rank(), "exposed_area_vector");
-  vectorTauWall_ = meta_data.get_field<GenericFieldType>(meta_data.side_rank(), "vector_tau_wall");
+  vectorTauWallBip_ = meta_data.get_field<GenericFieldType>(meta_data.side_rank(), "vector_tau_wall_bip");
   wallFrictionVelocityBip_ = meta_data.get_field<GenericFieldType>(meta_data.side_rank(), "wall_friction_velocity_bip");
   wallNormalDistanceBip_ = meta_data.get_field<GenericFieldType>(meta_data.side_rank(), "wall_normal_distance_bip");
   assembledWallArea_ = meta_data.get_field<ScalarFieldType>(stk::topology::NODE_RANK, "assembled_wall_area_wf");
@@ -202,7 +202,7 @@ ComputeMLWallFrictionVelocityAlgorithm::execute()
       const double * areaVec = stk::mesh::field_data(*exposedAreaVec_, face);
       double *wallNormalDistanceBip = stk::mesh::field_data(*wallNormalDistanceBip_, face);
       double *wallFrictionVelocityBip = stk::mesh::field_data(*wallFrictionVelocityBip_, face);
-      double *vectorTauWall = stk::mesh::field_data(*vectorTauWall_, face);
+      double *vectorTauWallBip = stk::mesh::field_data(*vectorTauWallBip_, face);
       
       // extract the connected element to this exposed face; should be single in size!
       const stk::mesh::Entity* face_elem_rels = bulk_data.begin_elements(face);
@@ -309,7 +309,7 @@ ComputeMLWallFrictionVelocityAlgorithm::execute()
         
         // scatter it
         for ( int i = 0; i < nDim; ++i )
-          vectorTauWall[ipNdim+i] = rhoBip*utauGuess*utauGuess*uTanNormal[i]/uTanMag;
+          vectorTauWallBip[ipNdim+i] = rhoBip*utauGuess*utauGuess*uTanNormal[i]/uTanMag;
       }
     }
   }

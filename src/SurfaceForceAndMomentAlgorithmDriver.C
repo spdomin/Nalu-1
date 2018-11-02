@@ -71,6 +71,7 @@ SurfaceForceAndMomentAlgorithmDriver::zero_fields()
   // one of these might be null
   ScalarFieldType *assembledArea = meta_data.get_field<ScalarFieldType>(stk::topology::NODE_RANK, "assembled_area_force_moment");
   ScalarFieldType *assembledAreaWF = meta_data.get_field<ScalarFieldType>(stk::topology::NODE_RANK, "assembled_area_force_moment_wf");
+  VectorFieldType *vectorTauWall = meta_data.get_field<VectorFieldType>(stk::topology::NODE_RANK, "vector_tau_wall");
 
   // zero fields
   field_fill( meta_data, bulk_data, 0.0, *pressureForce, realm_.get_activate_aura());
@@ -80,7 +81,8 @@ SurfaceForceAndMomentAlgorithmDriver::zero_fields()
     field_fill( meta_data, bulk_data, 0.0, *assembledArea, realm_.get_activate_aura());
   if ( NULL != assembledAreaWF ) 
     field_fill( meta_data, bulk_data, 0.0, *assembledAreaWF, realm_.get_activate_aura());
-
+  if ( NULL != vectorTauWall ) 
+    field_fill( meta_data, bulk_data, 0.0, *vectorTauWall, realm_.get_activate_aura());
 }
 
 //--------------------------------------------------------------------------

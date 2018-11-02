@@ -48,7 +48,7 @@ private:
   MomentumMLWallFunctionElemKernel() = delete;
   
   GenericFieldType *exposedAreaVec_{nullptr};
-  GenericFieldType *vectorTauWall_{nullptr};
+  GenericFieldType *vectorTauWallBip_{nullptr};
   GenericFieldType *wallNormalDistanceBip_{nullptr};
   ScalarFieldType *viscosity_{nullptr};
 

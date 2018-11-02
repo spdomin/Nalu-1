@@ -90,6 +90,7 @@
 #include "SurfaceForceAndMomentAlgorithmDriver.h"
 #include "SurfaceForceAndMomentAlgorithm.h"
 #include "SurfaceForceAndMomentWallFunctionAlgorithm.h"
+#include "SurfaceForceAndMomentMLWallFunctionAlgorithm.h"
 #include "Simulation.h"
 #include "SolutionOptions.h"
 #include "SolverAlgorithmDriver.h"
@@ -505,7 +506,6 @@ LowMachEquationSystem::register_surface_pp_algorithm(
   realm_.augment_output_variable_list(tauWall->name());
   realm_.augment_output_variable_list(yplus->name());
 
-
   if ( thePhysics == "surface_force_and_moment" ) {
     ScalarFieldType *assembledArea =  &(meta_data.declare_field<ScalarFieldType>(stk::topology::NODE_RANK, "assembled_area_force_moment"));
     stk::mesh::put_field_on_mesh(*assembledArea, stk::mesh::selectUnion(partVector), nullptr);
@@ -524,6 +524,22 @@ LowMachEquationSystem::register_surface_pp_algorithm(
       surfaceForceAndMomentAlgDriver_ = new SurfaceForceAndMomentAlgorithmDriver(realm_);
     SurfaceForceAndMomentWallFunctionAlgorithm *ppAlg
       = new SurfaceForceAndMomentWallFunctionAlgorithm(
+          realm_, partVector, theData.outputFileName_, theData.frequency_,
+          theData.parameters_, realm_.realmUsesEdges_);
+    surfaceForceAndMomentAlgDriver_->algVec_.push_back(ppAlg);
+  }
+  else if ( thePhysics == "surface_force_and_moment_ml_wall_function" ) {
+
+    ScalarFieldType *assembledArea =  &(meta_data.declare_field<ScalarFieldType>(stk::topology::NODE_RANK, "assembled_area_force_moment_ml_wf"));
+    stk::mesh::put_field_on_mesh(*assembledArea, stk::mesh::selectUnion(partVector), nullptr);
+
+    VectorFieldType *vectorTauWall =  &(meta_data.declare_field<VectorFieldType>(stk::topology::NODE_RANK, "vector_tau_wall"));
+    stk::mesh::put_field_on_mesh(*vectorTauWall, stk::mesh::selectUnion(partVector), meta_data.spatial_dimension(), nullptr);
+
+    if ( NULL == surfaceForceAndMomentAlgDriver_ )
+      surfaceForceAndMomentAlgDriver_ = new SurfaceForceAndMomentAlgorithmDriver(realm_);
+    SurfaceForceAndMomentMLWallFunctionAlgorithm *ppAlg
+      = new SurfaceForceAndMomentMLWallFunctionAlgorithm(
           realm_, partVector, theData.outputFileName_, theData.frequency_,
           theData.parameters_, realm_.realmUsesEdges_);
     surfaceForceAndMomentAlgDriver_->algVec_.push_back(ppAlg);
@@ -1991,9 +2007,9 @@ MomentumEquationSystem::register_wall_bc(
     stk::mesh::put_field_on_mesh(*wallNormalDistanceBip, *part, numScsBip, nullptr);
 
     if ( mlWallFunctionApproach ) {
-      GenericFieldType *vectorTauWall
-        = &(meta_data.declare_field<GenericFieldType>(sideRank, "vector_tau_wall"));
-      stk::mesh::put_field_on_mesh(*vectorTauWall, *part, nDim*numScsBip, nullptr);
+      GenericFieldType *vectorTauWallBip
+        = &(meta_data.declare_field<GenericFieldType>(sideRank, "vector_tau_wall_bip"));
+      stk::mesh::put_field_on_mesh(*vectorTauWallBip, *part, nDim*numScsBip, nullptr);
     }
     
     // create wallFunctionParamsAlgDriver

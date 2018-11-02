@@ -34,7 +34,7 @@ MomentumMLWallFunctionElemKernel<BcAlgTraits>::MomentumMLWallFunctionElemKernel(
   const stk::mesh::MetaData& metaData = bulkData.mesh_meta_data();
   viscosity_ = metaData.get_field<ScalarFieldType>(stk::topology::NODE_RANK, "viscosity");
   exposedAreaVec_ = metaData.get_field<GenericFieldType>(metaData.side_rank(), "exposed_area_vector");
-  vectorTauWall_ = metaData.get_field<GenericFieldType>(metaData.side_rank(), "vector_tau_wall");
+  vectorTauWallBip_ = metaData.get_field<GenericFieldType>(metaData.side_rank(), "vector_tau_wall_bip");
   wallNormalDistanceBip_ = metaData.get_field<GenericFieldType>(metaData.side_rank(), "wall_normal_distance_bip");
 
   // add master elements
@@ -47,7 +47,7 @@ MomentumMLWallFunctionElemKernel<BcAlgTraits>::MomentumMLWallFunctionElemKernel(
   // fields
   dataPreReqs.add_gathered_nodal_field(*viscosity_, 1);
   dataPreReqs.add_face_field(*exposedAreaVec_, BcAlgTraits::numFaceIp_, BcAlgTraits::nDim_);
-  dataPreReqs.add_face_field(*vectorTauWall_, BcAlgTraits::numFaceIp_, BcAlgTraits::nDim_);
+  dataPreReqs.add_face_field(*vectorTauWallBip_, BcAlgTraits::numFaceIp_, BcAlgTraits::nDim_);
   dataPreReqs.add_face_field(*wallNormalDistanceBip_, BcAlgTraits::numFaceIp_);
 
   NaluEnv::self().naluOutputP0() << "ML momentum wall function in use; lhsFac_" << lhsFac_ << std::endl;
@@ -66,7 +66,7 @@ MomentumMLWallFunctionElemKernel<BcAlgTraits>::execute(
 {
  
   SharedMemView<DoubleType**>& vf_exposedAreaVec = scratchViews.get_scratch_view_2D(*exposedAreaVec_);
-  SharedMemView<DoubleType**>& vf_vTauW = scratchViews.get_scratch_view_2D(*vectorTauWall_);
+  SharedMemView<DoubleType**>& vf_vTauW = scratchViews.get_scratch_view_2D(*vectorTauWallBip_);
   SharedMemView<DoubleType*>& vf_yp = scratchViews.get_scratch_view_1D(*wallNormalDistanceBip_);
   SharedMemView<DoubleType*>& v_viscosity = scratchViews.get_scratch_view_1D(*viscosity_);
 
