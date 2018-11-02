@@ -104,12 +104,20 @@ SurfaceForceAndMomentAlgorithmDriver::parallel_assemble_fields()
   // parallel assemble
   stk::mesh::parallel_sum(bulk_data, {pressureForce, tauWall, yplus});
 
+  VectorFieldType *vectorTauWall = meta_data.get_field<VectorFieldType>(stk::topology::NODE_RANK, "vector_tau_wall");
+  if ( NULL != vectorTauWall ) {
+    stk::mesh::parallel_sum(bulk_data, {vectorTauWall});
+  }
+
   // periodic assemble
   if ( realm_.hasPeriodic_) {
     const bool bypassFieldCheck = false; // fields are not defined at all slave/master node pairs
     realm_.periodic_field_update(pressureForce, nDim, bypassFieldCheck);
     realm_.periodic_field_update(tauWall, 1, bypassFieldCheck);
     realm_.periodic_field_update(yplus, 1, bypassFieldCheck);
+    if ( NULL != vectorTauWall ) {
+      realm_.periodic_field_update(vectorTauWall, 1, bypassFieldCheck);
+    }
   }
 
 }
