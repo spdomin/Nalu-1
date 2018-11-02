@@ -289,7 +289,7 @@ SurfaceForceAndMomentMLWallFunctionAlgorithm::execute()
           const double ai = areaVec[offSetAveraVec+i];
           ws_radius[i] = coord[i] - centroid[i];
           ws_p_force[i] = pBip*ai;
-          ws_v_force[i] = tauWallBip*ai;
+          ws_v_force[i] = vectorTauWallBip[ip*nDim+i]*aMag;
           ws_t_force[i] = ws_p_force[i] + ws_v_force[i];
           pressureForce[i] += ws_p_force[i];
         }
