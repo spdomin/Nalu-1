@@ -39,6 +39,7 @@ MomentumOpenAdvDiffElemKernel<BcAlgTraits>::MomentumOpenAdvDiffElemKernel(
     alphaUpw_(solnOpts.get_alpha_upw_factor("velocity")),
     om_alphaUpw_(1.0-alphaUpw_),
     hoUpwind_(solnOpts.get_upw_factor("velocity")),
+    useLimiter_(solnOpts.primitive_uses_limiter("velocity")),
     includeDivU_(solnOpts.includeDivU_),
     meshVelocityCorrection_(solnOpts.does_mesh_move() ? 1.0 : 0.0),
     shiftedGradOp_(solnOpts.get_shifted_grad_op(velocity->name())),
@@ -122,7 +123,11 @@ MomentumOpenAdvDiffElemKernel<BcAlgTraits>::execute(
   NALU_ALIGNED DoubleType w_uspecBip[BcAlgTraits::nDim_];
   NALU_ALIGNED DoubleType w_coordBip[BcAlgTraits::nDim_];
   NALU_ALIGNED DoubleType w_nx[BcAlgTraits::nDim_];
-
+  NALU_ALIGNED DoubleType w_limitR[BcAlgTraits::nDim_];
+  for ( int i = 0; i < BcAlgTraits::nDim_; ++i ) {
+    w_limitR[i] = 1.0;
+  }
+ 
   const int *face_node_ordinals = meSCS_->side_node_ordinals(elemFaceOrdinal);
  
   // face
@@ -180,7 +185,21 @@ MomentumOpenAdvDiffElemKernel<BcAlgTraits>::execute(
         w_rho_vBip[j] += r*rhoIc*vf_meshVelocity(ic,j);
       }
     }
-        
+
+    // determine limiter if applicable
+    if ( useLimiter_ ) {
+      for ( int i = 0; i < BcAlgTraits::nDim_; ++i ) {
+        DoubleType duR = 0.0;
+        for ( int j = 0; j < BcAlgTraits::nDim_; ++j ) {
+          DoubleType dxj = w_coordBip[j] - v_coordinates(nearestNode,j);
+          duR += dxj*vf_Gjui(localFaceNode,i,j)*hoUpwind_;
+        }
+        const DoubleType dq = v_velocityNp1(nearestNode,i) - v_velocityNp1(opposingNode,i);
+        const DoubleType dqMr = 2.0*2.0*duR - dq;
+        w_limitR[i] = van_leer(dqMr, dq);
+      }
+    }
+
     // Peclet factor; along the edge is fine  
     DoubleType udotx = 0.0;
     for ( int i = 0; i < BcAlgTraits::nDim_; ++i ) {
@@ -193,7 +212,7 @@ MomentumOpenAdvDiffElemKernel<BcAlgTraits>::execute(
         DoubleType dxj = w_coordBip[j] - v_coordinates(nearestNode,j);
         duR += dxj*vf_Gjui(localFaceNode,i,j)*hoUpwind_;
       }
-      w_uBipExtrap[i] = v_velocityNp1(nearestNode,i) + duR;
+      w_uBipExtrap[i] = v_velocityNp1(nearestNode,i) + duR*w_limitR[i];
     }
     
     // Peclet factor; along the edge is fine
@@ -202,7 +221,7 @@ MomentumOpenAdvDiffElemKernel<BcAlgTraits>::execute(
     const DoubleType pecFuncArg = stk::math::abs(udotx)/(diffIp+small_);
     const DoubleType pecfac = pecletFunction_->execute(pecFuncArg);
     const DoubleType om_pecfac = 1.0-pecfac;
-   
+    
     //================================
     // advection first
     //================================
@@ -325,6 +344,18 @@ MomentumOpenAdvDiffElemKernel<BcAlgTraits>::execute(
   }
 }
 
+template<class AlgTraits>
+DoubleType
+MomentumOpenAdvDiffElemKernel<AlgTraits>::van_leer(
+  const DoubleType &dqm,
+  const DoubleType &dqp)
+{
+  DoubleType limit = (2.0*(dqm*dqp+stk::math::abs(dqm*dqp))) /
+    ((dqm+dqp)*(dqm+dqp)+small_);
+  return limit;
+}
+
+  
 INSTANTIATE_KERNEL_FACE_ELEMENT(MomentumOpenAdvDiffElemKernel);
 
 }  // nalu

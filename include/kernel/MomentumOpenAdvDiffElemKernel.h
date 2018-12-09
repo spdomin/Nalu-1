@@ -58,6 +58,10 @@ public:
     ScratchViews<DoubleType> &elemScratchViews,
     int elemFaceOrdinal);
 
+  virtual DoubleType van_leer(
+    const DoubleType &dqm,
+    const DoubleType &dqp);
+
 private:
   MomentumOpenAdvDiffElemKernel() = delete;
 
@@ -76,6 +80,7 @@ private:
   const double alphaUpw_;
   const double om_alphaUpw_;
   const double hoUpwind_;
+  const bool useLimiter_;
   const double includeDivU_;
   const double meshVelocityCorrection_;
   const bool shiftedGradOp_;

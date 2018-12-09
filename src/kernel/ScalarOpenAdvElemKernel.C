@@ -42,6 +42,7 @@ ScalarOpenAdvElemKernel<BcAlgTraits>::ScalarOpenAdvElemKernel(
     alphaUpw_(solnOpts.get_alpha_upw_factor(scalarQ->name())),
     om_alphaUpw_(1.0-alphaUpw_),
     hoUpwind_(solnOpts.get_upw_factor(scalarQ->name())),
+    useLimiter_(solnOpts.primitive_uses_limiter(scalarQ->name())),
     faceIpNodeMap_(sierra::nalu::MasterElementRepo::get_surface_master_element(BcAlgTraits::faceTopo_)->ipNodeMap()),
     meSCS_(sierra::nalu::MasterElementRepo::get_surface_master_element(BcAlgTraits::elemTopo_)),
     pecletFunction_(eqSystem->create_peclet_function<DoubleType>(scalarQ->name()))
@@ -71,6 +72,7 @@ ScalarOpenAdvElemKernel<BcAlgTraits>::ScalarOpenAdvElemKernel(
 
   elemDataPreReqs.add_coordinates_field(*coordinates_, BcAlgTraits::nDim_, CURRENT_COORDINATES);
   elemDataPreReqs.add_gathered_nodal_field(*velocityRTM_, BcAlgTraits::nDim_);
+  elemDataPreReqs.add_gathered_nodal_field(*scalarQ_, 1);
   elemDataPreReqs.add_gathered_nodal_field(*diffFluxCoeff_, 1);
   elemDataPreReqs.add_gathered_nodal_field(*density_, 1);
 
@@ -110,6 +112,7 @@ ScalarOpenAdvElemKernel<BcAlgTraits>::execute(
   // element
   SharedMemView<DoubleType**>& v_coordinates = elemScratchViews.get_scratch_view_2D(*coordinates_);
   SharedMemView<DoubleType**>& v_vrtm = elemScratchViews.get_scratch_view_2D(*velocityRTM_);
+  SharedMemView<DoubleType*>& v_scalarQ = elemScratchViews.get_scratch_view_1D(*scalarQ_);
   SharedMemView<DoubleType*>& v_diffFluxCoeff = elemScratchViews.get_scratch_view_1D(*diffFluxCoeff_);
   SharedMemView<DoubleType*>& v_density = elemScratchViews.get_scratch_view_1D(*density_);
 
@@ -145,7 +148,15 @@ ScalarOpenAdvElemKernel<BcAlgTraits>::execute(
       DoubleType dxBip = w_coordBip[i] - v_coordinates(nearestNode,i);
       dqR += dxBip*vf_Gjq(localFaceNode,i)*hoUpwind_;
     }
-    const DoubleType qIpUpw = vf_scalarQ(localFaceNode) + dqR;
+
+    // add limiter if appropriate
+    DoubleType limitR = 1.0;
+    if ( useLimiter_ ) {
+      const DoubleType dq = v_scalarQ(nearestNode) - v_scalarQ(opposingNode);
+      const DoubleType dqMr = 2.0*2.0*dqR - dq;
+      limitR = van_leer(dqMr, dq);
+    }
+    const DoubleType qIpUpw = vf_scalarQ(localFaceNode) + dqR*limitR;
     
     // Peclet factor; along the edge is fine
     const DoubleType diffIp = 0.5*(v_diffFluxCoeff(opposingNode)/v_density(opposingNode)
@@ -194,7 +205,18 @@ ScalarOpenAdvElemKernel<BcAlgTraits>::execute(
     
   }
 }
-
+  
+template<class AlgTraits>
+DoubleType
+ScalarOpenAdvElemKernel<AlgTraits>::van_leer(
+  const DoubleType &dqm,
+  const DoubleType &dqp)
+{
+  DoubleType limit = (2.0*(dqm*dqp+stk::math::abs(dqm*dqp))) /
+    ((dqm+dqp)*(dqm+dqp)+small_);
+  return limit;
+}
+  
 INSTANTIATE_KERNEL_FACE_ELEMENT(ScalarOpenAdvElemKernel);
 
 }  // nalu
