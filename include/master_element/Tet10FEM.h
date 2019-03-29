@@ -6,38 +6,26 @@
 /*------------------------------------------------------------------------*/
 
 
-#ifndef Hex8FEM_h
-#define Hex8FEM_h
+#ifndef Tet10FEM_h
+#define Tet10FEM_h
 
 #include<master_element/MasterElement.h>
 
 namespace sierra{
 namespace nalu{
 
-// Hex 8 FEM; -1.0 : 1.0 range
-class Hex8FEM : public MasterElement
+// Tet 10 FEM
+class Tet10FEM : public MasterElement
 {
 public:
 
-  Hex8FEM();
-  virtual ~Hex8FEM();
-
-  void grad_op(
-    const int nelem,
-    const double *coords,
-    double *gradop,
-    double *deriv,
-    double *det_j,
-    double * error );
-
-  void shifted_grad_op(
-    const int nelem,
-    const double *coords,
-    double *gradop,
-    double *deriv,
-    double *det_j,
-    double * error );
-
+  Tet10FEM();
+  virtual ~Tet10FEM();
+  
+  // define the quadrature rule
+  const bool fifteenPt_;
+  
+  // NGP-ready methods first
   void determinant_fem(
     SharedMemView<DoubleType**>&coords,
     SharedMemView<DoubleType***>&deriv,
@@ -61,23 +49,16 @@ public:
   void shifted_shape_fcn(
     SharedMemView<DoubleType**> &shpfc) final;
 
-  void face_grad_op(
-    const int nelem,
-    const int face_ordinal,
-    const double *coords,
-    double *gradop,
-    double *det_j,
-    double *error);
-
-  void general_shape_fcn(
-    const int numIp,
-    const double *isoParCoord,
-    double *shpfc);
-
+  // non-NGP  
   void shape_fcn(
     double *shpfc);
 
   void shifted_shape_fcn(
+    double *shpfc);
+
+  void general_shape_fcn(
+    const int numIp,
+    const double *isoParCoord,
     double *shpfc);
 
   void gij(
@@ -86,25 +67,34 @@ public:
     double *glowerij,
     double *deriv);
 
-private:
+  double isInElement(
+    const double *elemNodalCoord,
+    const double *pointCoord,
+    double *isoParCoord);
 
-  void hex8_fem_shape_fcn(
-    const int  &numIp,
+  void interpolatePoint(
+    const int &ncomp_field,
     const double *isoParCoord,
-    double *shpfc);
+    const double *field,
+    double *result);
 
-  void hex8_fem_shape_fcn(
+  void tet10_fem_shape_fcn(
     const int  &numIp,
     const double *isoParCoord,
     SharedMemView<DoubleType**> shpfc);
 
-  void hex8_fem_derivative(
-    const int npt, const double* par_coord,
-    double* deriv);
+  void tet10_fem_shape_fcn(
+    const int  &numIp,
+    const double *isoParCoord,
+    double *shpfc);
 
-  void hex8_fem_derivative(
-    const int npt, const double* par_coord,
-    SharedMemView<DoubleType***> deriv);
+  void tet10_derivative(
+    const int  &npts,
+    const double *intgLoc, 
+    double *deriv);
+
+  double parametric_distance(
+    const double *x);
 };
     
 } // namespace nalu

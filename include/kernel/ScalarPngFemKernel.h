@@ -5,8 +5,8 @@
 /*  directory structure                                                   */
 /*------------------------------------------------------------------------*/
 
-#ifndef SCALARDIFFFEMKERNEL_H
-#define SCALARDIFFFEMKERNEL_H
+#ifndef ScalarPngFemKernel_H
+#define ScalarPngFemKernel_H
 
 #include "kernel/Kernel.h"
 #include "FieldTypeDef.h"
@@ -23,20 +23,20 @@ namespace nalu {
 class ElemDataRequests;
 class SolutionOptions;
 
-/** CVFEM scalar advection/diffusion kernel
+/** FEM PNG kernel
  */
 template<typename AlgTraits>
-class ScalarDiffFemKernel: public Kernel
+class ScalarPngFemKernel: public Kernel
 {
 public:
-  ScalarDiffFemKernel(
+  ScalarPngFemKernel(
     const stk::mesh::BulkData&,
     const SolutionOptions&,
-    ScalarFieldType*,
-    ScalarFieldType*,
+    std::string,
+    std::string,
     ElemDataRequests&);
 
-  virtual ~ScalarDiffFemKernel();
+  virtual ~ScalarPngFemKernel();
 
   /** Execute the kernel within a Kokkos loop and populate the LHS and RHS for
    *  the linear solve
@@ -47,15 +47,12 @@ public:
     ScratchViews<DoubleType>&);
 
 private:
-  ScalarDiffFemKernel() = delete;
+  ScalarPngFemKernel() = delete;
 
   ScalarFieldType *scalarQ_{nullptr};
-  ScalarFieldType *diffFluxCoeff_{nullptr};
+  VectorFieldType *Gjq_{nullptr};
   VectorFieldType *coordinates_{nullptr};
 
-  // master element
-  const bool shiftedGradOp_;
-  
   /// Shape functions
   AlignedViewType<DoubleType[AlgTraits::numGp_]> v_ip_weight_{ "v_ip_weight" };
   AlignedViewType<DoubleType[AlgTraits::numGp_][AlgTraits::nodesPerElement_]> v_shape_function_ { "v_shape_func" };
@@ -64,4 +61,4 @@ private:
 }  // nalu
 }  // sierra
 
-#endif /* SCALARDIFFFEMKERNEL_H */
+#endif /* ScalarPngFemKernel_H */

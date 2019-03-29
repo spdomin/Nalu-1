@@ -56,6 +56,7 @@
 // kernels
 #include "kernel/ScalarDiffElemKernel.h"
 #include "kernel/ScalarDiffFemKernel.h"
+#include "kernel/HeatCondMassFemKernel.h"
 
 // bc kernels
 #include "kernel/ScalarFluxPenaltyElemKernel.h"
@@ -295,7 +296,7 @@ HeatCondEquationSystem::register_interior_algorithm(
   VectorFieldType &dtdxNone = dtdx_->field_of_state(stk::mesh::StateNone);
 
   // non-solver; contribution to projected nodal gradient; allow for element-based shifted
-  if ( !managePNG_ ) {
+  if ( !managePNG_ && realm_.usesCVFEM_ ) {
     std::map<AlgorithmType, Algorithm *>::iterator it
       = assembleNodalGradAlgDriver_->algMap_.find(algType);
     if ( it == assembleNodalGradAlgDriver_->algMap_.end() ) {
@@ -395,7 +396,12 @@ HeatCondEquationSystem::register_interior_algorithm(
         temperature_, thermalCond_, dataPreReqs
       );
 
-      build_fem_kernel_if_requested<ScalarDiffFemKernel>(
+      build_fem_topo_kernel_if_requested<HeatCondMassFemKernel>(
+        partTopo, *this, activeKernels, "FEM_MASS",
+        realm_.bulk_data(), *realm_.solutionOptions_, temperature_, density_, specHeat_, dataPreReqs
+      );
+
+      build_fem_topo_kernel_if_requested<ScalarDiffFemKernel>(
         partTopo, *this, activeKernels, "FEM_DIFF",
         realm_.bulk_data(), *realm_.solutionOptions_, temperature_, thermalCond_, dataPreReqs
       );
@@ -406,54 +412,59 @@ HeatCondEquationSystem::register_interior_algorithm(
   }
 
   // time term; nodally lumped
+  std::vector<std::string> checkAlgNames = {"FEM_MASS"};
+  bool elementMassAlg = supp_alg_is_requested(checkAlgNames);
   const AlgorithmType algMass = MASS;
-  std::map<AlgorithmType, SolverAlgorithm *>::iterator itsm
-    = solverAlgDriver_->solverAlgMap_.find(algMass);
-  if ( itsm == solverAlgDriver_->solverAlgMap_.end() ) {
-    // create the solver alg
-    AssembleNodeSolverAlgorithm *theAlg
-      = new AssembleNodeSolverAlgorithm(realm_, part, this);
-    solverAlgDriver_->solverAlgMap_[algMass] = theAlg;
-
-    // now create the supplemental alg for mass term
-    if ( realm_.number_of_states() == 2 ) {
-      HeatCondMassBackwardEulerNodeSuppAlg *theMass
-        = new HeatCondMassBackwardEulerNodeSuppAlg(realm_);
-      theAlg->supplementalAlg_.push_back(theMass);
-    }
-    else {
-      HeatCondMassBDF2NodeSuppAlg *theMass
-        = new HeatCondMassBDF2NodeSuppAlg(realm_);
-      theAlg->supplementalAlg_.push_back(theMass);
-    }
-
-    // Add src term supp alg...; limited number supported
-    std::map<std::string, std::vector<std::string> >::iterator isrc 
-      = realm_.solutionOptions_->srcTermsMap_.find("temperature");
-    if ( isrc != realm_.solutionOptions_->srcTermsMap_.end() ) {
-      std::vector<std::string> mapNameVec = isrc->second;
-      for (size_t k = 0; k < mapNameVec.size(); ++k ) {
-        std::string sourceName = mapNameVec[k];
-        if (sourceName == "steady_2d_thermal" ) {
-          SteadyThermalContactSrcNodeSuppAlg *theSrc
-            = new SteadyThermalContactSrcNodeSuppAlg(realm_);
-          NaluEnv::self().naluOutputP0() << "HeatCondNodalSrcTerms::added() " << sourceName << std::endl;
-
-          theAlg->supplementalAlg_.push_back(theSrc);
-        }
-        else if (sourceName == "steady_3d_thermal" ) {
-          SteadyThermalContact3DSrcNodeSuppAlg *theSrc
-          = new SteadyThermalContact3DSrcNodeSuppAlg(realm_);
-          theAlg->supplementalAlg_.push_back(theSrc);
-        }
-        else {
-          throw std::runtime_error("HeatCondNodalSrcTerms::Error Source term is not supported: " + sourceName);
+  if ( !elementMassAlg || nodal_src_is_requested() ) {
+    NaluEnv::self().naluOutputP0() << "HeatCondEquationSystem::Nodal source terms will be created " << std::endl;
+    std::map<AlgorithmType, SolverAlgorithm *>::iterator itsm
+      = solverAlgDriver_->solverAlgMap_.find(algMass);
+    if ( itsm == solverAlgDriver_->solverAlgMap_.end() ) {
+      // create the solver alg
+      AssembleNodeSolverAlgorithm *theAlg
+        = new AssembleNodeSolverAlgorithm(realm_, part, this);
+      solverAlgDriver_->solverAlgMap_[algMass] = theAlg;
+      
+      // now create the supplemental alg for mass term
+      if ( realm_.number_of_states() == 2 ) {
+        HeatCondMassBackwardEulerNodeSuppAlg *theMass
+          = new HeatCondMassBackwardEulerNodeSuppAlg(realm_);
+        theAlg->supplementalAlg_.push_back(theMass);
+      }
+      else {
+        HeatCondMassBDF2NodeSuppAlg *theMass
+          = new HeatCondMassBDF2NodeSuppAlg(realm_);
+        theAlg->supplementalAlg_.push_back(theMass);
+      }
+      
+      // Add src term supp alg...; limited number supported
+      std::map<std::string, std::vector<std::string> >::iterator isrc 
+        = realm_.solutionOptions_->srcTermsMap_.find("temperature");
+      if ( isrc != realm_.solutionOptions_->srcTermsMap_.end() ) {
+        std::vector<std::string> mapNameVec = isrc->second;
+        for (size_t k = 0; k < mapNameVec.size(); ++k ) {
+          std::string sourceName = mapNameVec[k];
+          if (sourceName == "steady_2d_thermal" ) {
+            SteadyThermalContactSrcNodeSuppAlg *theSrc
+              = new SteadyThermalContactSrcNodeSuppAlg(realm_);
+            NaluEnv::self().naluOutputP0() << "HeatCondNodalSrcTerms::added() " << sourceName << std::endl;
+            
+            theAlg->supplementalAlg_.push_back(theSrc);
+          }
+          else if (sourceName == "steady_3d_thermal" ) {
+            SteadyThermalContact3DSrcNodeSuppAlg *theSrc
+              = new SteadyThermalContact3DSrcNodeSuppAlg(realm_);
+            theAlg->supplementalAlg_.push_back(theSrc);
+          }
+          else {
+            throw std::runtime_error("HeatCondNodalSrcTerms::Error Source term is not supported: " + sourceName);
+          }
         }
       }
     }
-  }
-  else {
-    itsm->second->partVec_.push_back(part);
+    else {
+      itsm->second->partVec_.push_back(part);
+    }
   }
 
   // deal with adaptivity
@@ -503,7 +514,7 @@ HeatCondEquationSystem::register_wall_bc(
   stk::mesh::MetaData &meta_data = realm_.meta_data();
 
   // non-solver; dtdx; allow for element-based shifted; all bcs are of generic type "WALL"
-  if ( !managePNG_ ) {
+  if ( !managePNG_ && realm_.usesCVFEM_ ) {
     std::map<AlgorithmType, Algorithm *>::iterator it
       = assembleNodalGradAlgDriver_->algMap_.find(algType);
     if ( it == assembleNodalGradAlgDriver_->algMap_.end() ) {
@@ -855,7 +866,7 @@ HeatCondEquationSystem::register_non_conformal_bc(
   VectorFieldType &dtdxNone = dtdx_->field_of_state(stk::mesh::StateNone);
 
   // non-solver; contribution to dtdx; DG algorithm decides on locations for integration points
-  if ( !managePNG_ ) {
+  if ( !managePNG_ && realm_.usesCVFEM_ ) {
     if ( edgeNodalGradient_ ) {    
       std::map<AlgorithmType, Algorithm *>::iterator it
         = assembleNodalGradAlgDriver_->algMap_.find(algType);

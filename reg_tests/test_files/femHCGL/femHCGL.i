@@ -18,6 +18,7 @@ realms:
     mesh: ../../mesh/periodic3d.g
     use_edges: no 
     automatic_decomposition_type: rcb
+    activate_fem: yes
 
     equation_systems:
       name: theEqSys
@@ -73,7 +74,7 @@ realms:
       options:
  
       - element_source_terms:
-          temperature: FEM_DIFF
+          temperature: [FEM_MASS, FEM_DIFF]
 
       - shifted_gradient_operator:
           temperature: yes 

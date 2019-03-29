@@ -5,7 +5,7 @@
 /*  directory structure                                                   */
 /*------------------------------------------------------------------------*/
 
-#include "kernel/ScalarDiffFemKernel.h"
+#include "kernel/ScalarPngFemKernel.h"
 #include "AlgTraits.h"
 #include "master_element/MasterElement.h"
 #include "SolutionOptions.h"
@@ -24,19 +24,19 @@ namespace sierra {
 namespace nalu {
 
 template<typename AlgTraits>
-ScalarDiffFemKernel<AlgTraits>::ScalarDiffFemKernel(
+ScalarPngFemKernel<AlgTraits>::ScalarPngFemKernel(
   const stk::mesh::BulkData& bulkData,
   const SolutionOptions& solnOpts,
-  ScalarFieldType* scalarQ,
-  ScalarFieldType* diffFluxCoeff,
+  std::string independentDofName,
+  std::string dofName,
   ElemDataRequests& dataPreReqs)
-  : Kernel(),
-    scalarQ_(scalarQ),
-    diffFluxCoeff_(diffFluxCoeff),
-    shiftedGradOp_(solnOpts.get_shifted_grad_op(scalarQ_->name()))
+  : Kernel()
 {
   // Save of required fields
   const stk::mesh::MetaData& metaData = bulkData.mesh_meta_data();
+  scalarQ_ = metaData.get_field<ScalarFieldType>(stk::topology::NODE_RANK, independentDofName);
+  Gjq_ = metaData.get_field<VectorFieldType>(stk::topology::NODE_RANK, dofName);
+
   coordinates_ = metaData.get_field<VectorFieldType>(stk::topology::NODE_RANK, solnOpts.get_coordinates_name());
 
   // extract master element
@@ -45,78 +45,84 @@ ScalarDiffFemKernel<AlgTraits>::ScalarDiffFemKernel(
   // copy ip weights into our 1-d view
   for ( int k = 0; k < AlgTraits::numGp_; ++k )
     v_ip_weight_[k] = meFEM->weights_[k];
-  
+
   // master element, shape function is shifted consistently
-  if ( shiftedGradOp_ )
+  if ( solnOpts.get_shifted_grad_op(dofName) )
     get_fem_shape_fn_data<AlgTraits>([&](double* ptr){meFEM->shifted_shape_fcn(ptr);}, v_shape_function_);
   else
     get_fem_shape_fn_data<AlgTraits>([&](double* ptr){meFEM->shape_fcn(ptr);}, v_shape_function_);
-
+  
+  // add FEM master element
   dataPreReqs.add_fem_volume_me(meFEM);
 
   // fields and data
   dataPreReqs.add_coordinates_field(*coordinates_, AlgTraits::nDim_, CURRENT_COORDINATES);
   dataPreReqs.add_gathered_nodal_field(*scalarQ_, 1);
-  dataPreReqs.add_gathered_nodal_field(*diffFluxCoeff_, 1);
-  if ( shiftedGradOp_ )
+  dataPreReqs.add_gathered_nodal_field(*Gjq_, AlgTraits::nDim_);
+  
+  if ( solnOpts.get_shifted_grad_op(dofName) )
     dataPreReqs.add_master_element_call(FEM_SHIFTED_GRAD_OP, CURRENT_COORDINATES);
   else
     dataPreReqs.add_master_element_call(FEM_GRAD_OP, CURRENT_COORDINATES);
+ 
 }
 
 template<typename AlgTraits>
-ScalarDiffFemKernel<AlgTraits>::~ScalarDiffFemKernel()
+ScalarPngFemKernel<AlgTraits>::~ScalarPngFemKernel()
 {
   // does nothing
 }
 
 template<typename AlgTraits>
 void
-ScalarDiffFemKernel<AlgTraits>::execute(
+ScalarPngFemKernel<AlgTraits>::execute(
   SharedMemView<DoubleType**>& lhs,
   SharedMemView<DoubleType*>& rhs,
   ScratchViews<DoubleType>& scratchViews)
 {
+  NALU_ALIGNED DoubleType w_GjqIp[AlgTraits::nDim_];
+
   SharedMemView<DoubleType*>& v_scalarQ = scratchViews.get_scratch_view_1D(*scalarQ_);
-  SharedMemView<DoubleType*>& v_diffFluxCoeff = scratchViews.get_scratch_view_1D(*diffFluxCoeff_);
+  SharedMemView<DoubleType**>& v_Gjq = scratchViews.get_scratch_view_2D(*Gjq_);
   
   SharedMemView<DoubleType***>& v_dndx = scratchViews.get_me_views(CURRENT_COORDINATES).dndx_fem;
   SharedMemView<DoubleType*>& v_det_j = scratchViews.get_me_views(CURRENT_COORDINATES).det_j_fem;
 
   for ( int ip = 0; ip < AlgTraits::numGp_; ++ip ) {
-
-    // compute ip property
-    DoubleType diffFluxCoeffIp = 0.0;
+    
+    // compute ip values
+    DoubleType qIp = 0.0;
+    for ( int j = 0; j < AlgTraits::nDim_; ++j )
+      w_GjqIp[j] = 0.0;
     for ( int ic = 0; ic < AlgTraits::nodesPerElement_; ++ic ) {
       const DoubleType r = v_shape_function_(ip,ic);
-      diffFluxCoeffIp += r*v_diffFluxCoeff(ic);
+      qIp += r*v_scalarQ(ic);
+      for ( int j = 0; j < AlgTraits::nDim_; ++j ) {
+        w_GjqIp[j] += r*v_Gjq(ic,j);
+      }
     }
 
-    // start the assembly
+    // start the assembly (collect ip scalings)
     const DoubleType ipFactor = v_det_j(ip)*v_ip_weight_(ip);
-    
+
     // row ir
     for ( int ir = 0; ir < AlgTraits::nodesPerElement_; ++ir) {
-
-      // column ic
-      DoubleType rhsSum = 0.0;
-      for ( int ic = 0; ic < AlgTraits::nodesPerElement_; ++ic ) {
-
-        DoubleType lhsSum = 0.0;
-        DoubleType scalarQ = v_scalarQ(ic);
-        for ( int j = 0; j < AlgTraits::nDim_; ++j ) {
-          const DoubleType fac = v_dndx(ip,ir,j)*v_dndx(ip,ic,j);
-          lhsSum += fac;
-          rhsSum += fac*scalarQ;
+      
+      const DoubleType wIr = v_shape_function_(ip,ir);
+      
+      // component j
+      for ( int j = 0; j < AlgTraits::nDim_; ++j ) {
+        // column ic
+        for ( int ic = 0; ic < AlgTraits::nodesPerElement_; ++ic ) {
+          lhs(ir*AlgTraits::nDim_+j,ic*AlgTraits::nDim_+j) += wIr*v_shape_function_(ip,ic)*ipFactor;
         }
-        lhs(ir,ic) += lhsSum*diffFluxCoeffIp*ipFactor;
+        rhs(ir*AlgTraits::nDim_+j) -= (wIr*w_GjqIp[j] + v_dndx(ip,ir,j)*qIp)*ipFactor;
       }
-      rhs(ir) -= rhsSum*diffFluxCoeffIp*ipFactor;
     }
   }
 }
-
-INSTANTIATE_FEM_KERNEL(ScalarDiffFemKernel);
+  
+INSTANTIATE_FEM_KERNEL(ScalarPngFemKernel);
 
 }  // nalu
 }  // sierra

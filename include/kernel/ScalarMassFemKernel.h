@@ -5,8 +5,8 @@
 /*  directory structure                                                   */
 /*------------------------------------------------------------------------*/
 
-#ifndef SCALARDIFFFEMKERNEL_H
-#define SCALARDIFFFEMKERNEL_H
+#ifndef ScalarMassFemKernel_H
+#define ScalarMassFemKernel_H
 
 #include "kernel/Kernel.h"
 #include "FieldTypeDef.h"
@@ -22,21 +22,26 @@ namespace nalu {
 
 class ElemDataRequests;
 class SolutionOptions;
+class TimeIntegrator;
 
 /** CVFEM scalar advection/diffusion kernel
  */
 template<typename AlgTraits>
-class ScalarDiffFemKernel: public Kernel
+class ScalarMassFemKernel: public Kernel
 {
 public:
-  ScalarDiffFemKernel(
+  ScalarMassFemKernel(
     const stk::mesh::BulkData&,
     const SolutionOptions&,
     ScalarFieldType*,
     ScalarFieldType*,
     ElemDataRequests&);
 
-  virtual ~ScalarDiffFemKernel();
+  virtual ~ScalarMassFemKernel();
+
+  /** Perform pre-timestep work for the computational kernel
+   */
+  virtual void setup(const TimeIntegrator&);
 
   /** Execute the kernel within a Kokkos loop and populate the LHS and RHS for
    *  the linear solve
@@ -47,15 +52,21 @@ public:
     ScratchViews<DoubleType>&);
 
 private:
-  ScalarDiffFemKernel() = delete;
+  ScalarMassFemKernel() = delete;
 
-  ScalarFieldType *scalarQ_{nullptr};
-  ScalarFieldType *diffFluxCoeff_{nullptr};
+  ScalarFieldType *scalarQNp1_{nullptr};
+  ScalarFieldType *scalarQN_{nullptr};
+  ScalarFieldType *scalarQNm1_{nullptr};
+  ScalarFieldType *densityNp1_{nullptr};
+  ScalarFieldType *densityN_{nullptr};
+  ScalarFieldType *densityNm1_{nullptr};
   VectorFieldType *coordinates_{nullptr};
 
-  // master element
-  const bool shiftedGradOp_;
-  
+  double dt_{0.0};
+  double gamma1_{0.0};
+  double gamma2_{0.0};
+  double gamma3_{0.0};
+
   /// Shape functions
   AlignedViewType<DoubleType[AlgTraits::numGp_]> v_ip_weight_{ "v_ip_weight" };
   AlignedViewType<DoubleType[AlgTraits::numGp_][AlgTraits::nodesPerElement_]> v_shape_function_ { "v_shape_func" };
@@ -64,4 +75,4 @@ private:
 }  // nalu
 }  // sierra
 
-#endif /* SCALARDIFFFEMKERNEL_H */
+#endif /* ScalarMassFemKernel_H */

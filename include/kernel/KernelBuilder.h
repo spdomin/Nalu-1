@@ -42,10 +42,17 @@ namespace nalu{
   }
 
   template <template <typename> class T, typename... Args>
-  Kernel* build_fem_kernel(stk::topology topo, Args&&... args)
+  Kernel* build_fem_topo_kernel(stk::topology topo, Args&&... args)
   {
-    ThrowRequireMsg(topo == stk::topology::HEXAHEDRON_8, "FEM kernels only implemented for Hex8 topology");
-    return new T<AlgTraitsHex8>(std::forward<Args>(args)...);
+    switch(topo.value()) {
+    case stk::topology::HEX_8:
+      return new T<AlgTraitsHex8>(std::forward<Args>(args)...);
+    case stk::topology::TET_10:
+      return new T<AlgTraitsTet10>(std::forward<Args>(args)...);
+    default:
+      ThrowRequireMsg(false, "Only Hex8 and Tet10 FEM elements currently supported");
+      return nullptr;
+    }
   }
 
   template <template <typename> class T, typename... Args>
@@ -209,7 +216,7 @@ namespace nalu{
   }
 
   template <template <typename> class T, typename... Args>
-  bool build_fem_kernel_if_requested(
+  bool build_fem_topo_kernel_if_requested(
     stk::topology topo,
     EquationSystem& eqSys,
     std::vector<Kernel*>& kernelVec,
@@ -219,7 +226,7 @@ namespace nalu{
     bool isCreated = false;
     KernelBuilderLog::self().add_valid_name(eqSys.eqnTypeName_,  name);
     if (eqSys.supp_alg_is_requested(name)) {
-      Kernel* compKernel = build_fem_kernel<T>(topo, std::forward<Args>(args)...);
+      Kernel* compKernel = build_fem_topo_kernel<T>(topo, std::forward<Args>(args)...);
       ThrowRequire(compKernel != nullptr);
       KernelBuilderLog::self().add_built_name(eqSys.eqnTypeName_,  name);
       kernelVec.push_back(compKernel);
@@ -262,6 +269,7 @@ namespace nalu{
                       topo == stk::topology::TRIANGLE_3_2D ||
                       topo == stk::topology::WEDGE_6 ||
                       topo == stk::topology::TETRAHEDRON_4 ||
+                      topo == stk::topology::TETRAHEDRON_10 ||
                       topo == stk::topology::PYRAMID_5);
 
     auto itc = solverAlgs.find(algName);

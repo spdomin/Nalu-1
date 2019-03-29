@@ -8,6 +8,7 @@
 #include "master_element/MasterElementFactory.h"
 #include "master_element/MasterElement.h"
 
+// CVFEM-based
 #include "master_element/Hex8CVFEM.h"
 #include "master_element/Hex27CVFEM.h"
 #include "master_element/Tet4CVFEM.h"
@@ -18,6 +19,10 @@
 #include "master_element/Quad92DCVFEM.h"
 #include "master_element/Tri32DCVFEM.h"
 #include "master_element/MasterElementHO.h"
+
+// FEM-based
+#include "master_element/Hex8FEM.h"
+#include "master_element/Tet10FEM.h"
 
 #include "NaluEnv.h"
 #include "nalu_make_unique.h"
@@ -186,6 +191,30 @@ namespace nalu{
   }
   //--------------------------------------------------------------------------
   std::unique_ptr<MasterElement>
+  create_fem_master_element(stk::topology topo)
+  {
+    if (topo.is_super_topology()) {
+      // super topologies uses different master element type
+      return nullptr;
+    }
+
+    switch ( topo.value() ) {
+
+      case stk::topology::HEX_8:
+        return make_unique<Hex8FEM>();
+
+      case stk::topology::TET_10:
+        return make_unique<Tet10FEM>();
+
+      default:
+        NaluEnv::self().naluOutputP0() << "sorry, FEM only supports Hex8 elements" << std::endl;
+        NaluEnv::self().naluOutputP0() << "your type is " << topo.value() << std::endl;
+        break;
+    }
+    return nullptr;
+  }
+  //--------------------------------------------------------------------------
+  std::unique_ptr<MasterElement>
   create_volume_master_element(
     stk::topology topo,
     int dimension,
@@ -254,10 +283,31 @@ namespace nalu{
     return theElem;
   }
 
+  std::map<stk::topology, std::unique_ptr<MasterElement>> MasterElementRepo::femMeMap_;
+  
+  MasterElement* MasterElementRepo::get_fem_master_element(
+    const stk::topology& theTopo,
+    int dimension,
+    std::string quadType)
+  {
+    // do not support arbitrary FEM promotion
+    if ( theTopo.is_super_topology() )
+      throw std::runtime_error("higher-order promotion is not valid for FEM-based approaches");  
+    auto it = femMeMap_.find(theTopo);
+    if (it == femMeMap_.end()) {
+      femMeMap_[theTopo] = create_fem_master_element(theTopo);
+    }
+    
+    MasterElement* theElem = femMeMap_.at(theTopo).get();
+    ThrowRequire(theElem != nullptr);
+    return theElem;
+  }
+
   void MasterElementRepo::clear()
   {
     surfaceMeMap_.clear();
     volumeMeMap_.clear();
+    femMeMap_.clear();
   }
 
 }
