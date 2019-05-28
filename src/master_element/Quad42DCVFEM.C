@@ -10,12 +10,8 @@
 #include <master_element/MasterElementFunctions.h>
 #include <master_element/Quad42DCVFEM.h>
 
-#include <master_element/MasterElementHO.h>
 #include <master_element/MasterElementUtils.h>
 
-#include <element_promotion/LagrangeBasis.h>
-#include <element_promotion/TensorProductQuadratureRule.h>
-#include <element_promotion/QuadratureRule.h>
 #include <AlgTraits.h>
 
 #include <NaluEnv.h>
@@ -280,7 +276,7 @@ Quad42DSCV::shifted_shape_fcn(double *shpfc)
 }
 
 //--------------------------------------------------------------------------
-//-------- quad_shape_fcn ---------------------------------------------------
+//-------- quad_shape_fcn --------------------------------------------------
 //--------------------------------------------------------------------------
 void
 Quad42DSCV::quad_shape_fcn(
