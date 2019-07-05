@@ -169,6 +169,8 @@ TurbulenceAveragingPostProcessing::load(
                        avInfo->computeTemperatureResolved_,
                        avInfo->computeTemperatureResolved_);
 
+        get_if_present(y_spec, "compute_mean_error_indicator", avInfo->computeMeanErrorIndictor_, avInfo->computeMeanErrorIndictor_);
+
         // we will need Reynolds/Favre-averaged velocity if we need to compute TKE
         if ( avInfo->computeTke_ || avInfo->computeReynoldsStress_ ) {
           const std::string velocityName = "velocity";
@@ -220,30 +222,6 @@ TurbulenceAveragingPostProcessing::setup()
 {
   stk::mesh::MetaData & metaData = realm_.meta_data();
 
-
-  // Special case for boussinesq_ra algorithm
-  // The algorithm requires that "temperature_ma" be available
-  // on all blocks where temperature is defined.
-  if (realm_.solutionOptions_->has_set_boussinesq_time_scale()) {
-    const std::string temperatureName  = "temperature";
-    const std::string fTempName = MovingAveragePostProcessor::filtered_field_name(temperatureName);
-
-    auto* tempField = metaData.get_field(stk::topology::NODE_RANK, "temperature");
-    ThrowRequireMsg(tempField != nullptr, "Temperature field must be registered");
-
-    auto& field = metaData.declare_field<ScalarFieldType>(stk::topology::NODE_RANK, fTempName);
-    stk::mesh::put_field_on_mesh(field, stk::mesh::selectField(*tempField), nullptr);
-    realm_.augment_restart_variable_list(fTempName);
-
-    movingAvgPP_ = make_unique<MovingAveragePostProcessor>(
-      realm_.bulk_data(),
-      *realm_.timeIntegrator_,
-      realm_.restarted_simulation()
-    );
-    movingAvgPP_->add_fields({temperatureName});
-    movingAvgPP_->set_time_scale(realm_.solutionOptions_->raBoussinesqTimeScale_);
-  }
-
   // loop over all info and setup (register fields, set parts, etc.)
   for (size_t k = 0; k < averageInfoVec_.size(); ++k ) {
  
@@ -263,7 +241,6 @@ TurbulenceAveragingPostProcessing::setup()
         // push back
         avInfo->partVec_.push_back(targetPart);
       }
-
 
       // register special fields whose name prevails over the averaging info name
       if ( avInfo->computeTke_ ) {
@@ -358,9 +335,37 @@ TurbulenceAveragingPostProcessing::setup()
           const std::string averagedName = primitiveName + "_resa_" + averageBlockName;
           register_field_from_primitive(primitiveName, averagedName, metaData, targetPart);
       }
-      
-    }
 
+      // Moving average
+      for ( size_t i = 0; i < avInfo->movingAvgFieldNameVec_.size(); ++i ) {
+        const std::string primitiveName  = avInfo->movingAvgFieldNameVec_[i];
+        const std::string maName = MovingAveragePostProcessor::filtered_field_name(primitiveName);
+        
+        auto* primitiveField = metaData.get_field(stk::topology::NODE_RANK, primitiveName);
+        ThrowRequireMsg(primitiveField != nullptr, "field must be registered");
+        
+        auto& maField = metaData.declare_field<ScalarFieldType>(stk::topology::NODE_RANK, maName);
+        stk::mesh::put_field_on_mesh(maField, stk::mesh::selectField(*primitiveField), nullptr);
+        realm_.augment_restart_variable_list(maName);
+        
+        movingAvgPP_ = make_unique<MovingAveragePostProcessor>(
+          realm_.bulk_data(),
+          *realm_.timeIntegrator_,
+          realm_.restarted_simulation());
+
+        movingAvgPP_->set_time_scale(timeFilterInterval_);
+        movingAvgPP_->add_fields({maName});
+      }
+    
+      // mean error indicator
+      if ( avInfo->computeMeanErrorIndictor_ ) {
+        const std::string meanEiName = "mean_error_indicator";
+        GenericFieldType *mEI= &(metaData.declare_field<GenericFieldType>(stk::topology::ELEMENT_RANK, meanEiName));
+        stk::mesh::put_field_on_mesh(*mEI, *targetPart, 1, nullptr);
+        realm_.augment_restart_variable_list(meanEiName); 
+      }
+    }
+    
     // now deal with pairs; extract density
     const std::string densityName = "density";
     const std::string densityReynoldsName = "density_ra_" + averageBlockName;
@@ -562,6 +567,10 @@ TurbulenceAveragingPostProcessing::review(
     NaluEnv::self().naluOutputP0() << "Mean resolved kinetic energy will be computed"<< std::endl;
   }
 
+  if ( avInfo->computeMeanErrorIndictor_ ) {
+    NaluEnv::self().naluOutputP0() << "Mean error indictor will be computed"<< std::endl;
+  }
+
   NaluEnv::self().naluOutputP0() << "===========================" << std::endl;
 }
 
@@ -717,6 +726,10 @@ TurbulenceAveragingPostProcessing::execute()
         & !(realm_.get_inactive_selector())
         & !(stk::mesh::selectUnion(realm_.get_slave_part_vector()));
       compute_mean_resolved_ke(avInfo->name_, s_locally_owned_nodes);
+    }
+    
+    if ( avInfo->computeMeanErrorIndictor_) {
+      compute_mean_error_indicator(s_all_nodes, dt, oldTimeFilter, zeroCurrent);
     }
     
     // avoid computing stresses when when oldTimeFilter is not zero
@@ -1436,6 +1449,40 @@ TurbulenceAveragingPostProcessing::compute_mean_resolved_ke(
                                  << g_sum[1]/g_sum[0] << " " 
                                  << g_sum[0] <<  " " 
                                  << realm_.get_current_time() << std::endl;
+}
+
+//--------------------------------------------------------------------------
+//-------- compute_mean_error_indicator ------------------------------------
+//--------------------------------------------------------------------------
+void
+TurbulenceAveragingPostProcessing::compute_mean_error_indicator(
+  stk::mesh::Selector s_all_nodes,
+  const double dt,
+  const double oldTimeFilter,
+  const double zeroCurrent)
+{
+  stk::mesh::MetaData & metaData = realm_.meta_data();
+
+  // extract fields
+  stk::mesh::FieldBase *errorIndicator = metaData.get_field(stk::topology::ELEMENT_RANK, "error_indicator");
+  stk::mesh::FieldBase *meanErrorIndicator = metaData.get_field(stk::topology::ELEMENT_RANK, "mean_error_indicator");
+
+  stk::mesh::BucketVector const& elem_buckets =
+    realm_.get_buckets( stk::topology::ELEMENT_RANK, s_all_nodes );
+  for ( stk::mesh::BucketVector::const_iterator ib = elem_buckets.begin();
+        ib != elem_buckets.end() ; ++ib ) {
+    stk::mesh::Bucket & b = **ib ;
+    const stk::mesh::Bucket::size_type length   = b.size();
+
+    // fields
+    double *ei = (double*)stk::mesh::field_data(*errorIndicator,b);
+    double *mei = (double*)stk::mesh::field_data(*meanErrorIndicator,b);
+
+    for ( stk::mesh::Bucket::size_type k = 0 ; k < length ; ++k ) {
+      const double averageField = (mei[k]*oldTimeFilter*zeroCurrent + ei[k]*dt)/currentTimeFilter_;  
+      mei[k] = averageField;
+    }
+  }
 }
 
 

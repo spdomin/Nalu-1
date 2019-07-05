@@ -7,7 +7,6 @@
 
 
 #include "LowMachEquationSystem.h"
-#include "ABLForcingAlgorithm.h"
 #include "AlgorithmDriver.h"
 #include "AssembleCourantReynoldsElemAlgorithm.h"
 #include "AssembleContinuityEdgeSolverAlgorithm.h"
@@ -24,8 +23,6 @@
 #include "AssembleMomentumElemSymmetrySolverAlgorithm.h"
 #include "AssembleMomentumEdgeWallFunctionSolverAlgorithm.h"
 #include "AssembleMomentumElemWallFunctionSolverAlgorithm.h"
-#include "AssembleMomentumElemABLWallFunctionSolverAlgorithm.h"
-#include "AssembleMomentumEdgeABLWallFunctionSolverAlgorithm.h"
 #include "AssembleMomentumNonConformalSolverAlgorithm.h"
 #include "AssembleNodalGradAlgorithmDriver.h"
 #include "AssembleNodalGradEdgeAlgorithm.h"
@@ -49,7 +46,6 @@
 #include "ComputeMdotElemOpenAlgorithm.h"
 #include "ComputeMdotNonConformalAlgorithm.h"
 #include "ComputeWallFrictionVelocityAlgorithm.h"
-#include "ComputeABLWallFrictionVelocityAlgorithm.h"
 #include "ConstantAuxFunction.h"
 #include "ContinuityGclNodeSuppAlg.h"
 #include "ContinuityLowSpeedCompressibleNodeSuppAlg.h"
@@ -61,7 +57,6 @@
 #include "Enums.h"
 #include "EquationSystem.h"
 #include "EquationSystems.h"
-#include "ErrorIndicatorAlgorithmDriver.h"
 #include "FieldFunctions.h"
 #include "LinearSolver.h"
 #include "LinearSolvers.h"
@@ -70,10 +65,7 @@
 #include "MomentumActuatorSrcNodeSuppAlg.h"
 #include "MomentumBuoyancySrcNodeSuppAlg.h"
 #include "MomentumBoussinesqSrcNodeSuppAlg.h"
-#include "MomentumBoussinesqRASrcNodeSuppAlg.h"
 #include "MomentumBodyForceSrcNodeSuppAlg.h"
-#include "MomentumABLForceSrcNodeSuppAlg.h"
-#include "MomentumCoriolisSrcNodeSuppAlg.h"
 #include "MomentumGclSrcNodeSuppAlg.h"
 #include "MomentumMassBackwardEulerNodeSuppAlg.h"
 #include "MomentumMassBDF2NodeSuppAlg.h"
@@ -97,7 +89,6 @@
 #include "TurbViscSmagorinskyAlgorithm.h"
 #include "TurbViscSSTAlgorithm.h"
 #include "TurbViscWaleAlgorithm.h"
-#include "ABLForcingAlgorithm.h"
 #include "FixPressureAtNodeAlgorithm.h"
 #include "FixPressureAtNodeInfo.h"
 
@@ -113,7 +104,6 @@
 #include "kernel/MomentumActuatorSrcElemKernel.h"
 #include "kernel/MomentumBuoyancyBoussinesqSrcElemKernel.h"
 #include "kernel/MomentumBuoyancySrcElemKernel.h"
-#include "kernel/MomentumCoriolisSrcElemKernel.h"
 #include "kernel/MomentumMassElemKernel.h"
 #include "kernel/MomentumUpwAdvDiffElemKernel.h"
 
@@ -168,6 +158,7 @@
 #include "user_functions/BoussinesqNonIsoVelocityAuxFunction.h"
 
 #include "user_functions/SinProfileChannelFlowVelocityAuxFunction.h"
+#include "user_functions/SinProfilePipeFlowVelocityAuxFunction.h"
 
 #include "user_functions/BoundaryLayerPerturbationAuxFunction.h"
 
@@ -337,7 +328,7 @@ LowMachEquationSystem::register_element_fields(
   }
 
   // deal with fluids error indicator; elemental field of size unity
-  if ( realm_.solutionOptions_->activateAdaptivity_) {
+  if ( realm_.solutionOptions_->errorIndicatorActive_) {
     const int numIp = 1;
     GenericFieldType *pstabEI= &(meta_data.declare_field<GenericFieldType>(stk::topology::ELEMENT_RANK, "error_indicator"));
     stk::mesh::put_field_on_mesh(*pstabEI, *part, numIp, nullptr);
@@ -386,7 +377,7 @@ LowMachEquationSystem::register_interior_algorithm(
 {
   // types of algorithms
   const AlgorithmType algType = INTERIOR;
-  if ( realm_.solutionOptions_->activateAdaptivity_) {
+  if ( realm_.solutionOptions_->errorIndicatorActive_) {
 
     // non-solver alg
     std::map<AlgorithmType, Algorithm *>::iterator it
@@ -633,6 +624,9 @@ LowMachEquationSystem::register_initial_condition_fcn(
     else if ( fcnName == "SinProfileChannelFlow" ) {
       theAuxFunc = new SinProfileChannelFlowVelocityAuxFunction(0,nDim);
     }
+    else if ( fcnName == "SinProfilePipeFlow" ) {
+      theAuxFunc = new SinProfilePipeFlowVelocityAuxFunction(0,nDim,fcnParams);
+    }
     else if ( fcnName == "power_law" ) {
       theAuxFunc = new PowerlawVelocityAuxFunction(0,nDim,fcnParams);
     }
@@ -762,56 +756,6 @@ LowMachEquationSystem::compute_dynamic_pressure()
   for( ii=dynamicPressureAlg_.begin(); ii!=dynamicPressureAlg_.end(); ++ii ) {
     (*ii)->execute();
   }
-}
-
-//--------------------------------------------------------------------------
-//-------- post_adapt_work -------------------------------------------------
-//--------------------------------------------------------------------------
-void
-LowMachEquationSystem::post_adapt_work()
-{
-
-  // at the very least, we need to populate ip values at edge/element
-  if ( realm_.process_adaptivity() ) {
-    
-    NaluEnv::self().naluOutputP0() << "--LowMachEquationSystem::post_adapt_work()" << std::endl;
-
-    // compute new nodal pressure gradient
-    continuityEqSys_->compute_projected_nodal_gradient();
-    
-    // continuity assemble, load_complete and solve
-    const bool solveCont = false;
-    if ( solveCont ) {
-
-      // compute new nodal pressure gradient
-      continuityEqSys_->compute_projected_nodal_gradient();
-      
-      continuityEqSys_->assemble_and_solve(continuityEqSys_->pTmp_);
-      
-      // update pressure
-      field_axpby(
-          realm_.meta_data(),
-          realm_.bulk_data(),
-          1.0, *continuityEqSys_->pTmp_,
-          1.0, *continuityEqSys_->pressure_,
-          realm_.get_activate_aura());
-    }
-    
-    // compute mdot
-    continuityEqSys_->computeMdotAlgDriver_->execute();
-    
-    // project nodal velocity/gradU
-    const bool processU = false;
-    if ( processU ) {
-      project_nodal_velocity();
-      momentumEqSys_->assembleNodalGradAlgDriver_->execute();
-    }
-    
-    // compute wall function parameters (bip values)
-    momentumEqSys_->compute_wall_function_params();
-    
-  }
-
 }
 
 //--------------------------------------------------------------------------
@@ -1312,14 +1256,6 @@ MomentumEquationSystem::register_interior_algorithm(
         (partTopo, *this, activeKernels, "NSO_4TH_KE",
          realm_.bulk_data(), *realm_.solutionOptions_, velocity_, dudx_, 1.0, dataPreReqs);
 
-      build_topo_kernel_if_requested<MomentumCoriolisSrcElemKernel>
-        (partTopo, *this, activeKernels, "EarthCoriolis",
-         realm_.bulk_data(), *realm_.solutionOptions_, velocity_, dataPreReqs, false);
-
-      build_topo_kernel_if_requested<MomentumCoriolisSrcElemKernel>
-        (partTopo, *this, activeKernels, "lumped_EarthCoriolis",
-         realm_.bulk_data(), *realm_.solutionOptions_, velocity_, dataPreReqs, true);
- 
       report_invalid_supp_alg_names();
       report_built_supp_alg_names();
     }
@@ -1367,9 +1303,6 @@ MomentumEquationSystem::register_interior_algorithm(
           else if ( sourceName == "buoyancy_boussinesq") {
             suppAlg = new MomentumBoussinesqSrcNodeSuppAlg(realm_);
           }
-          else if ( sourceName == "buoyancy_boussinesq_ra") {
-            suppAlg = new MomentumBoussinesqRASrcNodeSuppAlg(realm_);
-          }
           else if ( sourceName == "body_force") {
             // extract params
             std::map<std::string, std::vector<double> >::iterator iparams
@@ -1381,13 +1314,6 @@ MomentumEquationSystem::register_interior_algorithm(
             else {
               throw std::runtime_error("SrcTermsError::body_force: No params found");
             }
-          }
-          else if ( sourceName == "abl_forcing" ) {
-            ThrowAssertMsg(
-                           ((NULL != realm_.ablForcingAlg_) &&
-                            (realm_.ablForcingAlg_->momentumForcingOn())),
-                           "ERROR! ABL Forcing parameters must be initialized to use Momentum source.");
-            suppAlg = new MomentumABLForceSrcNodeSuppAlg(realm_, realm_.ablForcingAlg_);
           }
           else if ( sourceName == "gcl") {
             suppAlg = new MomentumGclSrcNodeSuppAlg(realm_);
@@ -1406,9 +1332,6 @@ MomentumEquationSystem::register_interior_algorithm(
           }
           else if ( sourceName == "actuator") {
             suppAlg = new MomentumActuatorSrcNodeSuppAlg(realm_);
-          }
-          else if ( sourceName == "EarthCoriolis") {
-            suppAlg = new MomentumCoriolisSrcNodeSuppAlg(realm_);
           }
           else {
             throw std::runtime_error("MomentumNodalSrcTerms::Error Source term is not supported: " + sourceName);
@@ -1663,7 +1586,7 @@ MomentumEquationSystem::register_open_bc(
 
   if ( realm_.solutionOptions_->useConsolidatedBcSolverAlg_ ) {      
     
-    // solver for continuity open
+    // solver for momentum open
     auto& solverAlgMap = solverAlgDriver_->solverAlgorithmMap_;
     
     stk::topology elemTopo = get_elem_topo(realm_, *part);
@@ -1718,9 +1641,7 @@ MomentumEquationSystem::register_wall_bc(
 
   // find out if this is a wall function approach
   WallUserData userData = wallBCData.userData_;
-  const bool wallFunctionApproach = userData.wallFunctionApproach_;
-  const bool ablWallFunctionApproach = userData.ablWallFunctionApproach_;
-  const bool anyWallFunctionActivated = wallFunctionApproach || ablWallFunctionApproach;
+  const bool anyWallFunctionActivated = userData.wallFunctionApproach_;
 
   // push mesh part
   if ( !anyWallFunctionActivated )
@@ -1842,124 +1763,59 @@ MomentumEquationSystem::register_wall_bc(
     stk::mesh::put_field_on_mesh(*wallNormalDistanceBip, *part, numScsBip, nullptr);
 
     // create wallFunctionParamsAlgDriver
-    if ( NULL == wallFunctionParamsAlgDriver_)
+    if ( NULL == wallFunctionParamsAlgDriver_) 
       wallFunctionParamsAlgDriver_ = new AlgorithmDriver(realm_);
-
-    if (ablWallFunctionApproach) {
-
-      // register boundary data: heat_flux_bc
-      ScalarFieldType *theHeatFluxBcField = &(meta_data.declare_field<ScalarFieldType>(stk::topology::NODE_RANK, "heat_flux_bc"));
-      stk::mesh::put_field_on_mesh(*theHeatFluxBcField, *part, nullptr);
-
-      NormalHeatFlux heatFlux = userData.q_;
-      std::vector<double> userSpec(1);
-      userSpec[0] = heatFlux.qn_;
-
-      // new it
-      ConstantAuxFunction *theHeatFluxAuxFunc = new ConstantAuxFunction(0, 1, userSpec);
-
-      // bc data alg
-      bcDataAlg_.push_back( new AuxFunctionAlgorithm(realm_, part,
-				   theHeatFluxBcField, theHeatFluxAuxFunc,
-				   stk::topology::NODE_RANK));
-
-      const AlgorithmType wfAlgType = WALL_ABL;
-
-      // create algorithm for utau, yp and assembled nodal wall area (_WallFunction)
-      //Gravity gravity = userData.gravity_;
-      //const double grav = gravity.gravity_;
-      std::vector<double> gravity;
-      gravity.resize(nDim);
-      gravity = realm_.solutionOptions_->gravity_;
-      const double grav = std::abs(gravity[userData.gravityComponent_ - 1]);
-      RoughnessHeight rough = userData.z0_;
-      const double z0 = rough.z0_;
-      ReferenceTemperature Tref = userData.referenceTemperature_;
-      const double referenceTemperature = Tref.referenceTemperature_;
-      std::map<AlgorithmType, Algorithm *>::iterator it_utau =
-        wallFunctionParamsAlgDriver_->algMap_.find(wfAlgType);
-      if ( it_utau == wallFunctionParamsAlgDriver_->algMap_.end() ) {
-        ComputeABLWallFrictionVelocityAlgorithm *theUtauAlg =
-          new ComputeABLWallFrictionVelocityAlgorithm(realm_, part, realm_.realmUsesEdges_, grav, z0, referenceTemperature);
-        wallFunctionParamsAlgDriver_->algMap_[wfAlgType] = theUtauAlg;
+   
+    const AlgorithmType wfAlgType = WALL_FCN;
+    
+    // create algorithm for utau, yp and assembled nodal wall area (_WallFunction)
+    std::map<AlgorithmType, Algorithm *>::iterator it_utau =
+      wallFunctionParamsAlgDriver_->algMap_.find(wfAlgType);
+    if ( it_utau == wallFunctionParamsAlgDriver_->algMap_.end() ) {
+      ComputeWallFrictionVelocityAlgorithm *theUtauAlg =
+        new ComputeWallFrictionVelocityAlgorithm(realm_, part, realm_.realmUsesEdges_);
+      wallFunctionParamsAlgDriver_->algMap_[wfAlgType] = theUtauAlg;
+    }
+    else {
+      it_utau->second->partVec_.push_back(part);
+    }
+    
+    // create lhs/rhs algorithm; generalized for edge (nearest node usage) and element
+    if ( realm_.solutionOptions_->useConsolidatedBcSolverAlg_ ) {        
+      // element-based uses consolidated approach fully
+      auto& solverAlgMap = solverAlgDriver_->solverAlgorithmMap_;
+      
+      AssembleElemSolverAlgorithm* solverAlg = nullptr;
+      bool solverAlgWasBuilt = false;
+      
+      std::tie(solverAlg, solverAlgWasBuilt) = build_or_add_part_to_face_bc_solver_alg(*this, *part, solverAlgMap, "wall_fcn");
+      
+      ElemDataRequests& dataPreReqs = solverAlg->dataNeededByKernels_;
+      auto& activeKernels = solverAlg->activeKernels_;
+      
+      if (solverAlgWasBuilt) {
+        build_face_topo_kernel_automatic<MomentumWallFunctionElemKernel>
+          (partTopo, *this, activeKernels, "momentum_wall_function",
+           realm_.bulk_data(), *realm_.solutionOptions_, dataPreReqs);
+        report_built_supp_alg_names();   
       }
-      else {
-        it_utau->second->partVec_.push_back(part);
-      }
-
-      // create lhs/rhs algorithm; generalized for edge (nearest node usage) and element
+    }
+    else {
+      // deprecated element-based and supported edge-based approach
       std::map<AlgorithmType, SolverAlgorithm *>::iterator it_wf =
         solverAlgDriver_->solverAlgMap_.find(wfAlgType);
       if ( it_wf == solverAlgDriver_->solverAlgMap_.end() ) {
         SolverAlgorithm *theAlg = NULL;
         if ( realm_.realmUsesEdges_ ) {
-          theAlg = new AssembleMomentumEdgeABLWallFunctionSolverAlgorithm(realm_, part, this, 
-                                                                          grav, z0, referenceTemperature);
+          theAlg = new AssembleMomentumEdgeWallFunctionSolverAlgorithm(realm_, part, this);
         }
         else {
-          theAlg = new AssembleMomentumElemABLWallFunctionSolverAlgorithm(realm_, part, this, realm_.realmUsesEdges_, 
-                                                                          grav, z0, referenceTemperature);     
+          theAlg = new AssembleMomentumElemWallFunctionSolverAlgorithm(realm_, part, this, realm_.realmUsesEdges_);
         }
         solverAlgDriver_->solverAlgMap_[wfAlgType] = theAlg;
       }
       else {
         it_wf->second->partVec_.push_back(part);
-      }
-    }
-
-    else {
-
-      const AlgorithmType wfAlgType = WALL_FCN;
-
-      // create algorithm for utau, yp and assembled nodal wall area (_WallFunction)
-      std::map<AlgorithmType, Algorithm *>::iterator it_utau =
-        wallFunctionParamsAlgDriver_->algMap_.find(wfAlgType);
-      if ( it_utau == wallFunctionParamsAlgDriver_->algMap_.end() ) {
-        ComputeWallFrictionVelocityAlgorithm *theUtauAlg =
-          new ComputeWallFrictionVelocityAlgorithm(realm_, part, realm_.realmUsesEdges_);
-        wallFunctionParamsAlgDriver_->algMap_[wfAlgType] = theUtauAlg;
-      }
-      else {
-        it_utau->second->partVec_.push_back(part);
-      }
-
-      // create lhs/rhs algorithm; generalized for edge (nearest node usage) and element
-      if ( realm_.solutionOptions_->useConsolidatedBcSolverAlg_ ) {        
-        // element-based uses consolidated approach fully
-        auto& solverAlgMap = solverAlgDriver_->solverAlgorithmMap_;
-        
-        AssembleElemSolverAlgorithm* solverAlg = nullptr;
-        bool solverAlgWasBuilt = false;
-        
-        std::tie(solverAlg, solverAlgWasBuilt) = build_or_add_part_to_face_bc_solver_alg(*this, *part, solverAlgMap, "wall_fcn");
-        
-        ElemDataRequests& dataPreReqs = solverAlg->dataNeededByKernels_;
-        auto& activeKernels = solverAlg->activeKernels_;
-        
-        if (solverAlgWasBuilt) {
-          build_face_topo_kernel_automatic<MomentumWallFunctionElemKernel>
-            (partTopo, *this, activeKernels, "momentum_wall_function",
-             realm_.bulk_data(), *realm_.solutionOptions_, dataPreReqs);
-          report_built_supp_alg_names();   
-        }
-      }
-      else {
-        // deprecated element-based and supported edge-based approach
-        std::map<AlgorithmType, SolverAlgorithm *>::iterator it_wf =
-          solverAlgDriver_->solverAlgMap_.find(wfAlgType);
-        if ( it_wf == solverAlgDriver_->solverAlgMap_.end() ) {
-          SolverAlgorithm *theAlg = NULL;
-          if ( realm_.realmUsesEdges_ ) {
-            theAlg = new AssembleMomentumEdgeWallFunctionSolverAlgorithm(realm_, part, this);
-          }
-          else {
-            theAlg = new AssembleMomentumElemWallFunctionSolverAlgorithm(realm_, part, this, realm_.realmUsesEdges_);
-          }
-          solverAlgDriver_->solverAlgMap_[wfAlgType] = theAlg;
-        }
-        else {
-          it_wf->second->partVec_.push_back(part);
-        }
       }
     }
   }

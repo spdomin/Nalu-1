@@ -72,10 +72,6 @@ endfunction(add_test_r_cat)
 #=============================================================================
 # Regression tests
 #=============================================================================
-add_test_r_cat(ablNeutralEdge 8 2)
-add_test_r(ablStableElem 4)
-add_test_r_rst(ablUnstableEdge 4)
-add_test_r(ablUnstableEdge_ra 4)
 add_test_r(actuatorLine 8)
 add_test_r(concentricRad 4)
 add_test_r(cvfemHC 8)
@@ -94,8 +90,6 @@ add_test_r(ductElemWedge 2)
 add_test_r(ductWedge 2)
 add_test_r(edgeHybridFluids 8)
 add_test_r(edgePipeCHT 4)
-add_test_r(ekmanSpiral 4)
-add_test_r(ekmanSpiralConsolidated 4)
 add_test_r(elemBackStepLRSST 4)
 add_test_r(elemClosedDomain 2)
 add_test_r(elemHybridFluids 8)
@@ -162,6 +156,8 @@ add_test_u(unitTest2 2)
 #=============================================================================
 # Performance tests
 #=============================================================================
-add_test_p(oversetHybrid 8)
-add_test_p(uqSlidingMeshDG 8)
-add_test_p(waleElemXflowMixFrac3.5m 8)
+if(ENABLE_PERFORMANCE_TESTS)
+  add_test_p(oversetHybrid 8)
+  add_test_p(uqSlidingMeshDG 8)
+  add_test_p(waleElemXflowMixFrac3.5m 8)
+endif(ENABLE_PERFORMANCE_TESTS)

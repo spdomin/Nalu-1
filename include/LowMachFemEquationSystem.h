@@ -51,6 +51,11 @@ public:
     stk::mesh::Part *part,
     const stk::topology &theTopo);
 
+  virtual void register_open_bc(
+    stk::mesh::Part *part,
+    const stk::topology &partTopo,
+    const OpenBoundaryConditionData &openBCData);
+
   virtual void pre_iter_work();
   virtual void solve_and_update();
 
@@ -88,6 +93,11 @@ public:
 
   virtual void register_interior_algorithm(
     stk::mesh::Part *part);
+
+  virtual void register_open_bc(
+    stk::mesh::Part *part,
+    const stk::topology &partTopo,
+    const OpenBoundaryConditionData &openBCData);
 
   virtual void register_wall_bc(
     stk::mesh::Part *part,
@@ -139,6 +149,11 @@ public:
       stk::mesh::Part *part,
       const std::map<std::string, std::string> &theNames,
       const std::map<std::string, std::vector<double> > &theParams);
+
+  virtual void register_open_bc(
+    stk::mesh::Part *part,
+    const stk::topology &partTopo,
+    const OpenBoundaryConditionData &openBCData);
 
   virtual void manage_projected_nodal_gradient(
     EquationSystems& eqSystems);
