@@ -97,7 +97,7 @@ ScalarFluxPenaltyElemKernel<BcAlgTraits>::execute(
     ? elemScratchViews.get_me_views(CURRENT_COORDINATES).dndx_shifted_fc_elem
     : elemScratchViews.get_me_views(CURRENT_COORDINATES).dndx_fc_elem;
 
-  for (int ip=0; ip < BcAlgTraits::numFaceIp_; ++ip) {
+  for (int ip = 0; ip < BcAlgTraits::numFaceIp_; ++ip) {
     
     const int nearestNode = meSCS_->ipNodeMap(elemFaceOrdinal)[ip]; // "Right"
     

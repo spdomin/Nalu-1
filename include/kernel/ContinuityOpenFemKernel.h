@@ -56,14 +56,13 @@ private:
 
   VectorFieldType *velocityRTM_{nullptr};
   VectorFieldType *Gpdx_{nullptr};
-  VectorFieldType *coordinates_{nullptr};
   ScalarFieldType *pressure_{nullptr};
   ScalarFieldType *pressureBc_{nullptr};
   ScalarFieldType *density_{nullptr};
   GenericFieldType *dynamicPressure_{nullptr};
 
   double projTimeScale_{1.0};
-  const double penaltyFac_{2.0};
+  const double penaltyFac_{4.0};
   
   const bool shiftedGradOp_;
   const bool reducedSensitivities_;
