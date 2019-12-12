@@ -91,6 +91,7 @@
 #include "TurbViscWaleAlgorithm.h"
 #include "FixPressureAtNodeAlgorithm.h"
 #include "FixPressureAtNodeInfo.h"
+#include "WallFunctionParamsAlgorithmDriver.h"
 
 // template for kernels
 #include "AlgTraits.h"
@@ -159,6 +160,8 @@
 
 #include "user_functions/SinProfileChannelFlowVelocityAuxFunction.h"
 #include "user_functions/SinProfilePipeFlowVelocityAuxFunction.h"
+
+#include "user_functions/ChannelFlowPerturbedPlugVelocityAuxFunction.h"
 
 #include "user_functions/BoundaryLayerPerturbationAuxFunction.h"
 
@@ -631,6 +634,9 @@ LowMachEquationSystem::register_initial_condition_fcn(
     }
     else if ( fcnName == "power_law" ) {
       theAuxFunc = new PowerlawVelocityAuxFunction(0,nDim,fcnParams);
+    }
+    else if ( fcnName == "ChannelFlowPerturbedPlug" ) {
+      theAuxFunc = new ChannelFlowPerturbedPlugVelocityAuxFunction(0,nDim,fcnParams);
     }
     else {
       throw std::runtime_error("InitialCondFunction::non-supported velocity IC"); 
@@ -1769,8 +1775,8 @@ MomentumEquationSystem::register_wall_bc(
 
     // create wallFunctionParamsAlgDriver
     if ( NULL == wallFunctionParamsAlgDriver_) 
-      wallFunctionParamsAlgDriver_ = new AlgorithmDriver(realm_);
-   
+      wallFunctionParamsAlgDriver_ = new WallFunctionParamsAlgorithmDriver(realm_);
+    
     const AlgorithmType wfAlgType = WALL_FCN;
     
     // create algorithm for utau, yp and assembled nodal wall area (_WallFunction)
