@@ -571,7 +571,7 @@ HeatCondEquationSystem::register_wall_bc(
   UserDataType theDataType = get_bc_data_type(userData, temperatureName);
 
   if ( userData.tempSpec_ ||  FUNCTION_UD == theDataType ) {
- 
+    
     // register boundary data; temperature_bc
     ScalarFieldType *theBcField = &(meta_data.declare_field<ScalarFieldType>(stk::topology::NODE_RANK, "temperature_bc"));
     stk::mesh::put_field_on_mesh(*theBcField, *part, nullptr);

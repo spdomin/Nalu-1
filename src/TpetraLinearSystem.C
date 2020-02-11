@@ -194,14 +194,13 @@ TpetraLinearSystem::beginLinearSystemConstruction()
   inConstruction_ = true;
   ThrowRequire(ownedGraph_.is_null());
   stk::mesh::BulkData & bulkData = realm_.bulk_data();
-  stk::mesh::MetaData & metaData = realm_.meta_data();
-
+ 
   // create a localID for all active nodes in the mesh...
-  const stk::mesh::Selector s_universal = metaData.universal_part()
-      & !(realm_.get_inactive_selector());
+  const stk::mesh::Selector s_physics = eqSys_->get_physics_selector()
+    & !(realm_.get_inactive_selector());
 
   stk::mesh::BucketVector const& buckets =
-      realm_.get_buckets( stk::topology::NODE_RANK, s_universal );
+      realm_.get_buckets( stk::topology::NODE_RANK, s_physics );
 
   // we allow for ghosted nodes when nonconformal is active. When periodic is active, we may
   // also have ghosted nodes due to the periodicGhosting. However, we want to exclude these
@@ -951,7 +950,7 @@ void
 TpetraLinearSystem::fill_entity_to_row_LID_mapping()
 {
   const stk::mesh::BulkData& bulk = realm_.bulk_data();
-  stk::mesh::Selector selector = bulk.mesh_meta_data().universal_part() & !(realm_.get_inactive_selector());
+  stk::mesh::Selector selector =  eqSys_->get_physics_selector() & !(realm_.get_inactive_selector());
   entityToLID_.assign(bulk.get_size_of_entity_index_space(), 2000000000);
   const stk::mesh::BucketVector& nodeBuckets = realm_.get_buckets(stk::topology::NODE_RANK, selector);
   for(const stk::mesh::Bucket* bptr : nodeBuckets) {
@@ -995,8 +994,7 @@ void
 TpetraLinearSystem::storeOwnersForShared()
 { 
   const stk::mesh::BulkData & bulkData = realm_.bulk_data();
-  const stk::mesh::MetaData & metaData = realm_.meta_data();
-  const stk::mesh::Selector all = metaData.universal_part() & !(realm_.get_inactive_selector());
+  const stk::mesh::Selector all = eqSys_->get_physics_selector() & !(realm_.get_inactive_selector());
   const stk::mesh::BucketVector& buckets = realm_.get_buckets( stk::topology::NODE_RANK, all );
   
   for(const stk::mesh::Bucket* bptr : buckets) {

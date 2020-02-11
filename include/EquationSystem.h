@@ -227,6 +227,9 @@ public:
 
   bool nodal_src_is_requested();
 
+  // physics selector
+  stk::mesh::Selector get_physics_selector();
+
   EquationSystems &equationSystems_;
   Realm &realm_;
   std::string name_;

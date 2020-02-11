@@ -498,6 +498,16 @@ EquationSystem::nodal_src_is_requested()
   return (isrc != realm_.solutionOptions_->srcTermsMap_.end());
 }
 
+//--------------------------------------------------------------------------
+//-------- get_physics_selector() ------------------------------------------
+//--------------------------------------------------------------------------
+stk::mesh::Selector
+EquationSystem::get_physics_selector()
+{
+  // default is to return the universal part
+  return realm_.meta_data().universal_part();
+}
+
 void
 EquationSystem::pre_iter_work()
 {
