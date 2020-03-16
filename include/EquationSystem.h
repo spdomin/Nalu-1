@@ -63,11 +63,17 @@ public:
   // base class with desired default no-op
   virtual void register_nodal_fields(
     stk::mesh::Part *part) {}
+  virtual void register_nodal_fields_alt(
+    stk::mesh::Part *part) {}
 
   virtual void register_edge_fields(
     stk::mesh::Part *part) {}
 
   virtual void register_element_fields(
+    stk::mesh::Part *part,
+    const stk::topology &theTopo) {}
+
+  virtual void register_element_fields_alt(
     stk::mesh::Part *part,
     const stk::topology &theTopo) {}
 
@@ -149,6 +155,9 @@ public:
   virtual void predict_state() {}
   virtual void register_interior_algorithm(
     stk::mesh::Part *part) {}
+  virtual void register_interior_algorithm_alt(
+    stk::mesh::Part *part, 
+    const std::vector<std::string> &terms) {}
   virtual void provide_output() {}
   virtual void pre_timestep_work();
   virtual void reinitialize_linear_system() {}

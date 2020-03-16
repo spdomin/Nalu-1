@@ -77,15 +77,18 @@ class EquationSystems
   
   void register_nodal_fields(
     const std::vector<std::string> targetNames);
+  void register_nodal_fields();
 
   void register_edge_fields(
     const std::vector<std::string> targetNames);
 
   void register_element_fields(
     const std::vector<std::string> targetNames);
+  void register_element_fields();
 
   void register_interior_algorithm(
     const std::vector<std::string> targetNames);
+  void register_interior_algorithm();
 
   void register_wall_bc(
     const std::string targetName,

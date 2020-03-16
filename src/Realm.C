@@ -739,6 +739,9 @@ Realm::setup_nodal_fields()
   // loop over all material props targets and register nodal fields
   std::vector<std::string> targetNames = get_physics_target_names();
   equationSystems_.register_nodal_fields(targetNames);
+
+  // let the equation system manage what is registered
+  equationSystems_.register_nodal_fields();
 }
 
 //--------------------------------------------------------------------------
@@ -760,6 +763,9 @@ Realm::setup_element_fields()
   // loop over all material props targets and register element fields
   std::vector<std::string> targetNames = get_physics_target_names();
   equationSystems_.register_element_fields(targetNames);
+  
+  // let the equation system manage what is registered
+  equationSystems_.register_element_fields();
 }
 
 //--------------------------------------------------------------------------
@@ -777,6 +783,9 @@ Realm::setup_interior_algorithms()
   // loop over all material props targets and register interior algs
   std::vector<std::string> targetNames = get_physics_target_names();
   equationSystems_.register_interior_algorithm(targetNames);
+  
+  // let the equation system manage what is required
+  equationSystems_.register_interior_algorithm();
 }
 
 //--------------------------------------------------------------------------

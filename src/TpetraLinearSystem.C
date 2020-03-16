@@ -198,10 +198,13 @@ TpetraLinearSystem::beginLinearSystemConstruction()
 
   // create a localID for all active nodes in the mesh...
   const stk::mesh::Selector s_universal = metaData.universal_part()
-      & !(realm_.get_inactive_selector());
+    & !(realm_.get_inactive_selector());
+  
+  //const stk::mesh::Selector s_universal = stk::mesh::selectUnion(eqSys_->active_part_vec())
+  //  & !(realm_.get_inactive_selector());
 
   stk::mesh::BucketVector const& buckets =
-      realm_.get_buckets( stk::topology::NODE_RANK, s_universal );
+    realm_.get_buckets( stk::topology::NODE_RANK, s_universal );
 
   // we allow for ghosted nodes when nonconformal is active. When periodic is active, we may
   // also have ghosted nodes due to the periodicGhosting. However, we want to exclude these

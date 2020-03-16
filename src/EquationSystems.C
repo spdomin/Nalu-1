@@ -30,6 +30,9 @@
 #include <TurbKineticEnergyEquationSystem.h>
 #include <pmr/RadiativeTransportEquationSystem.h>
 #include <mesh_motion/MeshDisplacementEquationSystem.h>
+// multi material ready
+#include <LowMachEquationSystemAlt.h>
+#include <TemperatureEquationSystem.h>
 
 #include <vector>
 
@@ -190,6 +193,22 @@ void EquationSystems::load(const YAML::Node & y_node)
           if (root()->debug()) NaluEnv::self().naluOutputP0() << "eqSys = MeshDisplacement " << std::endl;
           eqSys = new MeshDisplacementEquationSystem(*this, activateMass, deformWrtModelCoords);
         }
+        else if ( expect_map(y_system, "LowMachEOM_ALT", true) ) {
+	  y_eqsys =  expect_map(y_system, "LowMachEOM_ALT", true);
+          if (root()->debug()) NaluEnv::self().naluOutputP0() << "eqSys = LowMachEOM-ALT " << std::endl;
+          eqSys = new LowMachEquationSystemAlt(*this);
+        }
+        else if( expect_map(y_system, "Temperature", true) ) {
+	  y_eqsys =  expect_map(y_system, "Temperature", true);
+          if (root()->debug()) NaluEnv::self().naluOutputP0() << "eqSys = temperature " << std::endl;
+          double minT = 250.0;
+          double maxT = 3000.0;
+          get_if_present_no_default(y_eqsys, "minimum_temperature", minT);
+          get_if_present_no_default(y_eqsys, "maximum_temperature", maxT);
+          bool ouputClipDiag = true;
+          get_if_present_no_default(y_eqsys, "output_clipping_diagnostic", ouputClipDiag);
+          eqSys = new TemperatureEquationSystem(*this, minT, maxT, ouputClipDiag);
+        }
         else {
           if (!NaluEnv::self().parallel_rank()) {
             std::cout << "Error: parsing at " << NaluParsingHelper::info(y_system) 
@@ -256,7 +275,45 @@ EquationSystems::register_nodal_fields(
     }
   }
 }
-  
+
+//--------------------------------------------------------------------------
+//-------- register_nodal_fields -------------------------------------------
+//--------------------------------------------------------------------------
+void
+EquationSystems::register_nodal_fields()
+{
+  stk::mesh::MetaData &meta_data = realm_.meta_data();
+  EquationSystemVector::iterator ii;
+  for( ii=equationSystemVector_.begin(); ii!=equationSystemVector_.end(); ++ii ) {
+    const std::string eqSysName = (*ii)->eqnTypeName_;
+     
+    std::map<std::string, PdeInfo*>::const_iterator itPde
+      = realm_.solutionOptions_->pdeInfoMap_.find(eqSysName);
+    if ( itPde != realm_.solutionOptions_->pdeInfoMap_.end() ) {
+      const PdeInfo *info = itPde->second;
+      
+      std::vector<PdeSpecs*> specsVec = info->pdeSpecsVec_;
+      
+      for ( size_t isv = 0; isv < specsVec.size(); ++isv ) {
+        
+        // extract targets
+        std::vector<std::string> targets = specsVec[isv]->targets_;
+        
+        for ( size_t itarget = 0; itarget < targets.size(); ++itarget ) {
+          stk::mesh::Part *targetPart = meta_data.get_part(targets[itarget]);
+          if ( NULL == targetPart ) {
+            NaluEnv::self().naluOutputP0() << "Trouble with part " << targets[itarget] << std::endl;
+            throw std::runtime_error("Sorry, no part name found by the name " + targets[itarget]);
+          }
+          else {
+            (*ii)->register_nodal_fields_alt(targetPart);
+          }
+        }
+      }
+    }
+  }
+}
+
 //--------------------------------------------------------------------------
 //-------- register_edge_fields --------------------------------------------
 //--------------------------------------------------------------------------
@@ -306,6 +363,49 @@ EquationSystems::register_element_fields(
     }
   }
 }
+
+//--------------------------------------------------------------------------
+//-------- register_element_fields -----------------------------------------
+//--------------------------------------------------------------------------
+void
+EquationSystems::register_element_fields()
+{
+  stk::mesh::MetaData &meta_data = realm_.meta_data();
+  EquationSystemVector::iterator ii;
+  for( ii=equationSystemVector_.begin(); ii!=equationSystemVector_.end(); ++ii ) {
+    const std::string eqSysName = (*ii)->eqnTypeName_;
+     
+    std::map<std::string, PdeInfo*>::const_iterator itPde
+      = realm_.solutionOptions_->pdeInfoMap_.find(eqSysName);
+    if ( itPde != realm_.solutionOptions_->pdeInfoMap_.end() ) {
+      const PdeInfo *info = itPde->second;
+      
+      std::vector<PdeSpecs*> specsVec = info->pdeSpecsVec_;
+      
+      for ( size_t isv = 0; isv < specsVec.size(); ++isv ) {
+        
+        // extract targets
+        std::vector<std::string> targets = specsVec[isv]->targets_;
+        
+        for ( size_t itarget = 0; itarget < targets.size(); ++itarget ) {
+          stk::mesh::Part *targetPart = meta_data.get_part(targets[itarget]);
+          if ( NULL == targetPart ) {
+            NaluEnv::self().naluOutputP0() << "Trouble with part " << targets[itarget] << std::endl;
+            throw std::runtime_error("Sorry, no part name found by the name " + targets[itarget]);
+          }
+          else {
+            // found the part; no need to subset
+            const stk::topology the_topo = targetPart->topology();
+            if( stk::topology::ELEMENT_RANK != targetPart->primary_entity_rank() ) {
+              throw std::runtime_error("Sorry, parts need to be elements.. " + targets[itarget]);
+            }
+            (*ii)->register_element_fields_alt(targetPart, the_topo);
+          }
+        }
+      }
+    }
+  }
+}
   
 //--------------------------------------------------------------------------
 //-------- register_interior_algorithm -------------------------------------
@@ -331,6 +431,45 @@ EquationSystems::register_interior_algorithm(
       EquationSystemVector::iterator ii;
       for( ii=equationSystemVector_.begin(); ii!=equationSystemVector_.end(); ++ii )
         (*ii)->register_interior_algorithm(targetPart);
+    }
+  }
+}
+
+//--------------------------------------------------------------------------
+//-------- register_interior_algorithm -------------------------------------
+//--------------------------------------------------------------------------
+void
+EquationSystems::register_interior_algorithm()
+{
+  stk::mesh::MetaData &meta_data = realm_.meta_data();
+  EquationSystemVector::iterator ii;
+  for( ii=equationSystemVector_.begin(); ii!=equationSystemVector_.end(); ++ii ) {
+    const std::string eqSysName = (*ii)->eqnTypeName_;
+     
+    std::map<std::string, PdeInfo*>::const_iterator itPde
+      = realm_.solutionOptions_->pdeInfoMap_.find(eqSysName);
+    if ( itPde != realm_.solutionOptions_->pdeInfoMap_.end() ) {
+      const PdeInfo *info = itPde->second;
+      
+      std::vector<PdeSpecs*> specsVec = info->pdeSpecsVec_;
+      
+      for ( size_t isv = 0; isv < specsVec.size(); ++isv ) {
+        
+        // extract targets and pde terms active
+        std::vector<std::string> targets = specsVec[isv]->targets_;
+        std::vector<std::string> terms = specsVec[isv]->terms_;
+        
+        for ( size_t itarget = 0; itarget < targets.size(); ++itarget ) {
+          stk::mesh::Part *targetPart = meta_data.get_part(targets[itarget]);
+          if ( NULL == targetPart ) {
+            NaluEnv::self().naluOutputP0() << "Trouble with part " << targets[itarget] << std::endl;
+            throw std::runtime_error("Sorry, no part name found by the name " + targets[itarget]);
+          }
+          else {
+            (*ii)->register_interior_algorithm_alt(targetPart, terms);
+          }
+        }
+      }
     }
   }
 }

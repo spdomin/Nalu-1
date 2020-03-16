@@ -43,7 +43,7 @@ namespace nalu{
   }
 
   template <template <typename> class T, typename... Args>
-  Kernel* build_topo_kernel(int dimension, stk::topology topo, Args&&... args)
+  Kernel* build_topo_kernel(stk::topology topo, Args&&... args)
   {
     switch(topo.value()) {
     case stk::topology::HEX_8:
@@ -175,15 +175,32 @@ namespace nalu{
     std::string name,
     Args&&... args)
   {
-    // dimension, in addition to topology, is necessary to distinguish the HO elements,
-    const int dim = eqSys.realm_.spatialDimension_;
-
     bool isCreated = false;
     KernelBuilderLog::self().add_valid_name(eqSys.eqnTypeName_,  name);
     if (eqSys.supp_alg_is_requested(name)) {
-      Kernel* compKernel = build_topo_kernel<T>(dim, topo, std::forward<Args>(args)...);
+      Kernel* compKernel = build_topo_kernel<T>(topo, std::forward<Args>(args)...);
       ThrowRequire(compKernel != nullptr);
       KernelBuilderLog::self().add_built_name(eqSys.eqnTypeName_,  name);
+      kernelVec.push_back(compKernel);
+      isCreated = true;
+    }
+    return isCreated;
+  }
+
+  template <template <typename> class T, typename... Args>
+  bool build_topo_kernel_if_requested_alt(
+    stk::topology topo,
+    EquationSystem& eqSys,
+    std::vector<Kernel*>& kernelVec,
+    std::string name,
+    std::vector<std::string> terms,
+    Args&&... args)
+  {
+    bool isCreated = false;
+
+    if (std::find(terms.begin(), terms.end(), name) != terms.end()) {
+      Kernel* compKernel = build_topo_kernel<T>(topo, std::forward<Args>(args)...);
+      ThrowRequire(compKernel != nullptr);
       kernelVec.push_back(compKernel);
       isCreated = true;
     }
@@ -291,10 +308,11 @@ namespace nalu{
   build_or_add_part_to_solver_alg(
     EquationSystem& eqSys,
     stk::mesh::Part& part,
-    std::map<std::string, SolverAlgorithm*>& solverAlgs)
+    std::map<std::string, SolverAlgorithm*>& solverAlgs,
+    std::string partName = "")
   {
     const stk::topology topo = part.topology();
-    const std::string algName = eqSys.name_ + "_AssembleElemSolverAlg_" + topo.name();
+    const std::string algName = eqSys.name_ + "_AssembleElemSolverAlg_" + topo.name() + "_" + partName;
 
     bool isNotNGP = !(topo == stk::topology::HEXAHEDRON_8 ||
                       topo == stk::topology::HEXAHEDRON_27 ||

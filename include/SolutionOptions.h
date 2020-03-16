@@ -34,6 +34,21 @@ enum ErrorIndicatorType {
   EIT_SIMPLE_DUDX2        = EIT_SIMPLE_BASE + (1 << 6)
 };
 
+// hold some information for the pde targets and terms
+class PdeSpecs {
+ public:
+  PdeSpecs() {}
+  ~PdeSpecs() {}
+  std::vector<std::string> targets_;
+  std::vector<std::string> terms_;
+};
+ 
+class PdeInfo {
+ public:
+  PdeInfo() {}
+  ~PdeInfo() {}
+  std::vector<PdeSpecs *> pdeSpecsVec_;
+};
 
 class SolutionOptions
 {
@@ -164,6 +179,9 @@ public:
   std::map<std::string, std::vector<double> > srcTermParamMap_;
   std::map<std::string, std::vector<std::string> > elemSrcTermsMap_;
   std::map<std::string, std::vector<double> > elemSrcTermParamMap_;
+
+  // pde terms
+  std::map<std::string, PdeInfo*> pdeInfoMap_;
 
   // nodal gradient
   std::map<std::string, std::string> nodalGradMap_;

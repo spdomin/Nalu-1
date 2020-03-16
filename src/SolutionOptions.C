@@ -89,9 +89,15 @@ SolutionOptions::SolutionOptions()
 //--------------------------------------------------------------------------
 SolutionOptions::~SolutionOptions()
 {
-  std::map<std::string, MeshMotionInfo *>::iterator it;
-  for ( it = meshMotionInfoMap_.begin(); it!= meshMotionInfoMap_.end(); ++it ) {
-    MeshMotionInfo *info = it->second;
+  std::map<std::string, MeshMotionInfo *>::iterator itM;
+  for ( itM = meshMotionInfoMap_.begin(); itM!= meshMotionInfoMap_.end(); ++itM ) {
+    MeshMotionInfo *info = itM->second;
+    delete info;
+  }
+
+  std::map<std::string, PdeInfo *>::iterator itP;
+  for ( itP = pdeInfoMap_.begin(); itP!= pdeInfoMap_.end(); ++itP ) {
+    PdeInfo *info = itP->second;
     delete info;
   }
   for ( it = initialMeshDisplacementInfoMap_.begin(); it!= initialMeshDisplacementInfoMap_.end(); ++it ) {
@@ -190,7 +196,88 @@ SolutionOptions::load(const YAML::Node & y_node)
 
     // allow for periodic sampling in time
     get_if_present(y_solution_options, "input_variables_from_file_periodic_time",
-      inputVariablesPeriodicTime_, inputVariablesPeriodicTime_);
+                   inputVariablesPeriodicTime_, inputVariablesPeriodicTime_);
+    
+    // extract pde declaration
+    const YAML::Node y_pde_decls = expect_sequence(y_solution_options, "pde_declarations", optional);
+    if ( y_pde_decls ) {
+      
+      for (size_t ipde = 0; ipde < y_pde_decls.size(); ++ipde) {
+        const YAML::Node y_pde_decl = y_pde_decls[ipde];
+        
+        std::string eqSysName;
+        get_required(y_pde_decl, "equation_system", eqSysName);
+        
+        // create one pdeInfo per equation system
+        PdeInfo *pdeInfo = new PdeInfo();
+
+        // look for it... FIXME...
+        std::map<std::string, PdeInfo*>::const_iterator itPdeInfo
+          = pdeInfoMap_.find(eqSysName);
+        if ( itPdeInfo == pdeInfoMap_.end() ) {
+          // not found; new it and push back
+          pdeInfoMap_[eqSysName] = pdeInfo;
+        }
+        else {
+          throw std::runtime_error("pde_declarations found multiple equation systems of the same name: " + eqSysName);
+        }
+        
+        const YAML::Node specifications = y_pde_decl["specifications"];
+        
+        if (specifications) {
+          
+          const YAML::Node y_specs = expect_sequence(y_pde_decl, "specifications", true);
+          
+          if (y_specs) {
+
+            for (size_t ispec = 0; ispec < y_specs.size(); ++ispec) {
+      
+              // create a pdeSpecs object
+              PdeSpecs *pdeSpecs = new PdeSpecs();
+
+              // extract the specification
+              const YAML::Node y_spec = y_specs[ispec];
+              
+              // targets
+              if ( y_spec["target_name"] ) {
+                const YAML::Node &targets = y_spec["target_name"];
+                if (targets.Type() == YAML::NodeType::Scalar) {
+                  std::string tName = targets.as<std::string>();
+                  pdeSpecs->targets_.push_back(tName);
+                }
+                else {
+                  for (size_t i=0; i < targets.size(); ++i) {
+                    std::string tName = targets[i].as<std::string>();
+                    pdeSpecs->targets_.push_back(tName);
+                  }
+                }
+              }
+              else {
+                throw std::runtime_error("target_name is required for pde_declarations, specifications");
+              }
+              
+              // activation (optional)
+              if ( y_spec["activate"] ) {
+                const YAML::Node &activate = y_spec["activate"];
+                if (activate.Type() == YAML::NodeType::Scalar) {
+                  std::string aName = activate.as<std::string>();
+                  pdeSpecs->terms_.push_back(aName);
+                }
+                else {
+                  for (size_t i=0; i < activate.size(); ++i) {
+                    std::string aName = activate[i].as<std::string>();
+                    pdeSpecs->terms_.push_back(aName);
+                  }
+                }
+              }
+
+              // push back
+              pdeInfo->pdeSpecsVec_.push_back(pdeSpecs);
+            }
+          }        
+        }
+      }
+    }
 
     // first set of options; hybrid, source, etc.
     const YAML::Node y_options = expect_sequence(y_solution_options, "options", required);
@@ -578,7 +665,37 @@ SolutionOptions::load(const YAML::Node & y_node)
                                        << " shifted: " << (shiftIt.second ? "yes" : "no") << std::endl; 
       }
     }
-  } 
+
+    // overview pde terms
+    std::map<std::string, PdeInfo* >::const_iterator itPde;
+    for ( itPde = pdeInfoMap_.begin(); itPde!= pdeInfoMap_.end(); ++itPde ) {
+      const std::string eqSysName = itPde->first;
+      const PdeInfo *info = itPde->second;
+      
+      NaluEnv::self().naluOutputP0() << "EqSystem: " << eqSysName << " Review:" << std::endl;
+      
+      std::vector<PdeSpecs*> specsVec = info->pdeSpecsVec_;
+      
+      for ( size_t isv = 0; isv < specsVec.size(); ++isv ) {
+        
+        // extract targets and pde terms active
+        std::vector<std::string> targets = specsVec[isv]->targets_;
+        std::vector<std::string> terms = specsVec[isv]->terms_;
+                
+        // output terms
+        NaluEnv::self().naluOutputP0() << "Terms active: ";
+        for ( size_t iterm = 0; iterm < terms.size(); ++iterm )
+          NaluEnv::self().naluOutputP0() << terms[iterm] << " ";      
+        NaluEnv::self().naluOutputP0() << std::endl;
+
+        // output targets
+        NaluEnv::self().naluOutputP0() << " on targets: ";
+        for ( size_t itarg = 0; itarg < targets.size(); ++itarg )
+          NaluEnv::self().naluOutputP0() << targets[itarg] << " ";
+        NaluEnv::self().naluOutputP0() << std::endl;
+      }
+    }
+  }
 }
 
 //--------------------------------------------------------------------------

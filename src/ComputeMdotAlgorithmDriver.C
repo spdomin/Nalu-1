@@ -104,8 +104,35 @@ ComputeMdotAlgorithmDriver::ComputeMdotAlgorithmDriver(
       }
     }
   }
-}
 
+  // finaly, look for denisty time derivative in new fully modular style
+  std::map<std::string, PdeInfo*>::const_iterator itPde
+    = realm_.solutionOptions_->pdeInfoMap_.find("continuity");
+  if ( itPde != realm_.solutionOptions_->pdeInfoMap_.end() ) {
+    const PdeInfo *info = itPde->second;
+    
+    std::vector<PdeSpecs*> specsVec = info->pdeSpecsVec_;
+    
+    for ( size_t isv = 0; isv < specsVec.size(); ++isv ) {
+      
+      // extract pde terms active
+      std::vector<std::string> terms = specsVec[isv]->terms_;
+      
+      // check for consistent
+      if ( std::find(terms.begin(), terms.end(), "density_time_derivative") != terms.end() ) {
+        hasMass_ = true;
+        lumpedMass_ = false;
+      }
+      
+      // check for lumped
+      if ( std::find(terms.begin(), terms.end(), "lumped_density_time_derivative") != terms.end() ) {
+        hasMass_ = true;
+        lumpedMass_ = true;
+      } 
+    }
+  }
+}
+  
 //--------------------------------------------------------------------------
 //-------- destructor ------------------------------------------------------
 //--------------------------------------------------------------------------
