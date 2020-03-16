@@ -209,7 +209,7 @@ TpetraLinearSystem::beginLinearSystemConstruction()
   LocalOrdinal numGhostNodes = 0;
   LocalOrdinal numOwnedNodes = 0;
   LocalOrdinal numNodes = 0;
-  LocalOrdinal numSharedNotOwnedNotLocallyOwned = 0; // these are nodes on other procs
+  LocalOrdinal numSharedNotOwned = 0; // these are nodes on other procs
   // First, get the number of owned and sharedNotOwned (or num_sharedNotOwned_nodes = num_nodes - num_owned_nodes)
   //KOKKOS: BucketLoop parallel "reduce" is accumulating 4 sums
   kokkos_parallel_for("Nalu::TpetraLinearSystem::beginLinearSystemConstructionA", buckets.size(), [&] (const int& ib) {
@@ -232,7 +232,7 @@ TpetraLinearSystem::beginLinearSystemConstruction()
 
       if (status & DS_SharedNotOwnedDOF) {
         numNodes++;
-        numSharedNotOwnedNotLocallyOwned++;
+        numSharedNotOwned++;
       }
 
       if (status & DS_GhostedDOF) {
@@ -253,11 +253,11 @@ TpetraLinearSystem::beginLinearSystemConstruction()
   // make separate arrays that hold the owned and sharedNotOwned gids
   std::vector<stk::mesh::Entity> owned_nodes, shared_not_owned_nodes;
   owned_nodes.reserve(numOwnedNodes);
-  shared_not_owned_nodes.reserve(numSharedNotOwnedNotLocallyOwned);
+  shared_not_owned_nodes.reserve(numSharedNotOwned);
 
   std::vector<GlobalOrdinal> ownedGids, sharedNotOwnedGids;
   ownedGids.reserve(maxOwnedRowId_);
-  sharedNotOwnedGids.reserve(numSharedNotOwnedNotLocallyOwned*numDof_);
+  sharedNotOwnedGids.reserve(numSharedNotOwned*numDof_);
   sharedPids_.reserve(sharedNotOwnedGids.capacity());
 
   // owned first:
@@ -1456,10 +1456,10 @@ TpetraLinearSystem::sumInto(
 {
   constexpr bool forceAtomic = !std::is_same<sierra::nalu::DeviceSpace, Kokkos::Serial>::value;
 
-  ThrowAssertMsg(lhs.is_contiguous(), "LHS assumed contiguous");
-  ThrowAssertMsg(rhs.is_contiguous(), "RHS assumed contiguous");
-  ThrowAssertMsg(localIds.is_contiguous(), "localIds assumed contiguous");
-  ThrowAssertMsg(sortPermutation.is_contiguous(), "sortPermutation assumed contiguous");
+  ThrowAssertMsg(lhs.span_is_contiguous(), "LHS assumed contiguous");
+  ThrowAssertMsg(rhs.span_is_contiguous(), "RHS assumed contiguous");
+  ThrowAssertMsg(localIds.span_is_contiguous(), "localIds assumed contiguous");
+  ThrowAssertMsg(sortPermutation.span_is_contiguous(), "sortPermutation assumed contiguous");
 
   const int n_obj = numEntities;
   const int numRows = n_obj * numDof_;
@@ -2177,37 +2177,39 @@ int getDofStatus_impl(stk::mesh::Entity node, const Realm& realm)
   const bool entityIsShared = b.shared();
   const bool entityIsGhosted = !entityIsOwned && !entityIsShared;
 
-  bool has_non_matching_boundary_face_alg = realm.has_non_matching_boundary_face_alg();
-  bool hasPeriodic = realm.hasPeriodic_;
-
-  if (realm.hasPeriodic_ && realm.has_non_matching_boundary_face_alg()) {
-    has_non_matching_boundary_face_alg = false;
-    hasPeriodic = false;
-
-    stk::mesh::Selector perSel = stk::mesh::selectUnion(realm.allPeriodicInteractingParts_);
+  bool nonConformalActive = realm.has_non_matching_boundary_face_alg();
+  bool periodicActive = realm.hasPeriodic_;
+  
+  // check if a node, which is associated with a row, is both periodic and non-conformal; not yet supported
+  bool isNonConformalNode = false;
+  bool isPeriodicNode = false;
+  
+  if ( nonConformalActive ) {
     stk::mesh::Selector nonConfSel = stk::mesh::selectUnion(realm.allNonConformalInteractingParts_);
-    //std::cout << "nonConfSel= " << nonConfSel << std::endl;
-
     for (auto part : b.supersets()) {
-      if (perSel(*part)) {
-        hasPeriodic = true;
-      }
       if (nonConfSel(*part)) {
-        has_non_matching_boundary_face_alg = true;
+        isNonConformalNode = true;
       }
     }
   }
-
-  //std::cerr << "has_non_matching_boundary_face_alg= " << has_non_matching_boundary_face_alg << " hasPeriodic= " << hasPeriodic << std::endl;
-
-  if (has_non_matching_boundary_face_alg && hasPeriodic) {
+  
+  if ( periodicActive ) {
+    stk::mesh::Selector perSel = stk::mesh::selectUnion(realm.allPeriodicInteractingParts_);
+    for (auto part : b.supersets()) {
+      if (perSel(*part)) {
+        isPeriodicNode = true;
+      }
+    }
+  }
+  
+  if (isNonConformalNode && isPeriodicNode) {
     std::ostringstream ostr;
     ostr << "node id= " << realm.bulkData_->identifier(node);
     throw std::logic_error("not ready for primetime to combine periodic and non-matching algorithm on same node: "+ostr.str());
   }
 
   // simple case
-  if (!hasPeriodic && !has_non_matching_boundary_face_alg) {
+  if (!isPeriodicNode  && !nonConformalActive) {
     if (entityIsGhosted)
       return DS_GhostedDOF;
     if (entityIsOwned)
@@ -2216,33 +2218,24 @@ int getDofStatus_impl(stk::mesh::Entity node, const Realm& realm)
       return DS_SharedNotOwnedDOF;
   }
 
-  if (has_non_matching_boundary_face_alg) {
-    if (entityIsOwned)
-      return DS_OwnedDOF;
-    //if (entityIsShared && !entityIsOwned) {
-    if (!entityIsOwned && (entityIsGhosted || entityIsShared)){
-      return DS_SharedNotOwnedDOF;
-    }
-    // maybe return DS_GhostedDOF if entityIsGhosted
-  }
-
-  if (hasPeriodic) {
+  // more complex case; this node is a periodic node
+  if ( isPeriodicNode ) {
     const stk::mesh::EntityId stkId = bulkData.identifier(node);
     const stk::mesh::EntityId naluId = *stk::mesh::field_data(*realm.naluGlobalId_, node);
-
+    
     // bool for type of ownership for this node
     const bool nodeOwned = bulkData.bucket(node).owned();
     const bool nodeShared = bulkData.bucket(node).shared();
     const bool nodeGhosted = !nodeOwned && !nodeShared;
-
+    
     // really simple here.. ghosted nodes never part of the matrix
     if ( nodeGhosted ) {
       return DS_GhostedDOF;
     }
-
+    
     // bool to see if this is possibly a periodic node
     const bool isSlaveNode = (stkId != naluId);
-
+    
     if (!isSlaveNode) {
       if (nodeOwned)
         return DS_OwnedDOF;
@@ -2269,7 +2262,16 @@ int getDofStatus_impl(stk::mesh::Entity node, const Realm& realm)
       }
     }
   }
-
+  
+  // finally, if non conformal is active
+  if ( nonConformalActive ) {
+    if (entityIsOwned)
+      return DS_OwnedDOF;
+    if (!entityIsOwned && (entityIsGhosted || entityIsShared)){
+      return DS_SharedNotOwnedDOF; // note shared overload
+    }
+  }
+  
   // still got here? problem...
   if (1)
     throw std::logic_error("bad status2");
