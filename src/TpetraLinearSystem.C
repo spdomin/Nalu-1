@@ -92,8 +92,7 @@ TpetraLinearSystem::TpetraLinearSystem(
   LinearSolver * linearSolver)
   : LinearSystem(realm, numDof, eqSys, linearSolver)
 {
-  Teuchos::ParameterList junk;
-  node_ = Teuchos::rcp(new LinSys::Node(junk));
+  // nothing to do
 }
 
 TpetraLinearSystem::~TpetraLinearSystem()
@@ -159,16 +158,16 @@ int TpetraLinearSystem::getDofStatus(stk::mesh::Entity node)
     return getDofStatus_impl(node, realm_);
 }
 
-stk::mesh::Entity get_entity_master(const stk::mesh::BulkData& bulk,
+stk::mesh::Entity get_entity_monarch(const stk::mesh::BulkData& bulk,
                              stk::mesh::Entity entity,
                              stk::mesh::EntityId naluId)
 { 
-  bool thisEntityIsMaster = (bulk.identifier(entity) == naluId);
-  if (thisEntityIsMaster) {
+  bool thisEntityIsMonarch = (bulk.identifier(entity) == naluId);
+  if (thisEntityIsMonarch) {
     return entity;
   }
-  stk::mesh::Entity master = bulk.get_entity(stk::topology::NODE_RANK, naluId);
-  if (!bulk.is_valid(master)) {
+  stk::mesh::Entity monarch = bulk.get_entity(stk::topology::NODE_RANK, naluId);
+  if (!bulk.is_valid(monarch)) {
     std::ostringstream os;
     const stk::mesh::Entity* elems = bulk.begin_elements(entity);
     unsigned numElems = bulk.num_elements(entity);
@@ -177,15 +176,15 @@ stk::mesh::Entity get_entity_master(const stk::mesh::BulkData& bulk,
        os<<"{"<<bulk.identifier(elems[i])<<","<<bulk.bucket(elems[i]).topology()
          <<",owned="<<bulk.bucket(elems[i]).owned()<<"}";
     }
-    ThrowRequireMsg(bulk.is_valid(master),
-                    "get_entity_master, P"<<bulk.parallel_rank()
+    ThrowRequireMsg(bulk.is_valid(monarch),
+                    "get_entity_monarch, P"<<bulk.parallel_rank()
                     <<" failed to get entity for naluId="<<naluId
                     <<", from entity with stkId="<<bulk.identifier(entity)
                     <<", owned="<<bulk.bucket(entity).owned()
                     <<", shared="<<bulk.bucket(entity).shared()
                     <<", "<<os.str());
   }
-  return master;
+  return monarch;
 }
 
 void
@@ -211,7 +210,7 @@ TpetraLinearSystem::beginLinearSystemConstruction()
   LocalOrdinal numGhostNodes = 0;
   LocalOrdinal numOwnedNodes = 0;
   LocalOrdinal numNodes = 0;
-  LocalOrdinal numSharedNotOwnedNotLocallyOwned = 0; // these are nodes on other procs
+  LocalOrdinal numSharedNotOwned = 0; // these are nodes on other procs
   // First, get the number of owned and sharedNotOwned (or num_sharedNotOwned_nodes = num_nodes - num_owned_nodes)
   //KOKKOS: BucketLoop parallel "reduce" is accumulating 4 sums
   kokkos_parallel_for("Nalu::TpetraLinearSystem::beginLinearSystemConstructionA", buckets.size(), [&] (const int& ib) {
@@ -234,7 +233,7 @@ TpetraLinearSystem::beginLinearSystemConstruction()
 
       if (status & DS_SharedNotOwnedDOF) {
         numNodes++;
-        numSharedNotOwnedNotLocallyOwned++;
+        numSharedNotOwned++;
       }
 
       if (status & DS_GhostedDOF) {
@@ -255,11 +254,11 @@ TpetraLinearSystem::beginLinearSystemConstruction()
   // make separate arrays that hold the owned and sharedNotOwned gids
   std::vector<stk::mesh::Entity> owned_nodes, shared_not_owned_nodes;
   owned_nodes.reserve(numOwnedNodes);
-  shared_not_owned_nodes.reserve(numSharedNotOwnedNotLocallyOwned);
+  shared_not_owned_nodes.reserve(numSharedNotOwned);
 
   std::vector<GlobalOrdinal> ownedGids, sharedNotOwnedGids;
   ownedGids.reserve(maxOwnedRowId_);
-  sharedNotOwnedGids.reserve(numSharedNotOwnedNotLocallyOwned*numDof_);
+  sharedNotOwnedGids.reserve(numSharedNotOwned*numDof_);
   sharedPids_.reserve(sharedNotOwnedGids.capacity());
 
   // owned first:
@@ -304,7 +303,7 @@ TpetraLinearSystem::beginLinearSystemConstruction()
   for (unsigned inode=0; inode < shared_not_owned_nodes.size(); ++inode) {
     stk::mesh::Entity entity = shared_not_owned_nodes[inode];
     const stk::mesh::EntityId naluId = *stk::mesh::field_data(*realm_.naluGlobalId_, entity);
-    entity = get_entity_master(bulkData, entity, naluId);
+    entity = get_entity_monarch(bulkData, entity, naluId);
     myLIDs_[naluId] = numDof_*localId++;
     int owner = bulkData.parallel_owner_rank(entity);
     for(unsigned idof=0; idof < numDof_; ++ idof) {
@@ -337,9 +336,9 @@ int TpetraLinearSystem::insert_connection(stk::mesh::Entity a, stk::mesh::Entity
     bool correctEntity = ownedAndSharedNodes_[idx] == a;
     if (!correctEntity) {
       const stk::mesh::EntityId naluid_a = *stk::mesh::field_data(*realm_.naluGlobalId_, a);
-      stk::mesh::Entity master = get_entity_master(realm_.bulk_data(), a, naluid_a);
-      const stk::mesh::EntityId naluid_master = *stk::mesh::field_data(*realm_.naluGlobalId_, master);
-      correctEntity = ownedAndSharedNodes_[idx] == master || naluid_a == naluid_master;
+      stk::mesh::Entity monarch = get_entity_monarch(realm_.bulk_data(), a, naluid_a);
+      const stk::mesh::EntityId naluid_monarch = *stk::mesh::field_data(*realm_.naluGlobalId_, monarch);
+      correctEntity = ownedAndSharedNodes_[idx] == monarch || naluid_a == naluid_monarch;
     }
     ThrowRequireMsg(correctEntity,"Error, indexing of rowEntities to connections isn't right.");
 
@@ -376,7 +375,7 @@ TpetraLinearSystem::buildNodeGraph(const stk::mesh::PartVector & parts)
 
   const stk::mesh::Selector s_owned = metaData.locally_owned_part()
     & stk::mesh::selectUnion(parts) 
-    & !(stk::mesh::selectUnion(realm_.get_slave_part_vector()))
+    & !(stk::mesh::selectUnion(realm_.get_subject_part_vector()))
     & !(realm_.get_inactive_selector());
 
   stk::mesh::BucketVector const& buckets =
@@ -619,7 +618,7 @@ TpetraLinearSystem::copy_stk_to_tpetra(
 
   const stk::mesh::Selector selector = stk::mesh::selectField(*stkField) 
     & metaData.locally_owned_part() 
-    & !(stk::mesh::selectUnion(realm_.get_slave_part_vector())) 
+    & !(stk::mesh::selectUnion(realm_.get_subject_part_vector())) 
     & !(realm_.get_inactive_selector());
 
   stk::mesh::BucketVector const& buckets = bulkData.get_buckets(stk::topology::NODE_RANK, selector);
@@ -769,8 +768,8 @@ TpetraLinearSystem::compute_send_lengths(const std::vector<stk::mesh::Entity>& r
     const bool entity_a_shared = entity_a_status & DS_SharedNotOwnedDOF;
     
     if (entity_a_shared) {
-        stk::mesh::Entity master = get_entity_master(bulk, entity_a, entityId_a);
-        size_t idx = get_neighbor_index(neighborProcs, bulk.parallel_owner_rank(master));
+        stk::mesh::Entity monarch = get_entity_monarch(bulk, entity_a, entityId_a);
+        size_t idx = get_neighbor_index(neighborProcs, bulk.parallel_owner_rank(monarch));
         sendLengths[idx] += (1+numColEntities)*(sizeof(GlobalOrdinal)+sizeof(int));
     }
     
@@ -783,8 +782,8 @@ TpetraLinearSystem::compute_send_lengths(const std::vector<stk::mesh::Entity>& r
         const int entity_b_status = (entityId_a != entityId_b) ? getDofStatus(entity_b) : entity_a_status;
         const bool entity_b_shared = entity_b_status & DS_SharedNotOwnedDOF;
         if (entity_b_shared) {
-            stk::mesh::Entity master = get_entity_master(bulk, entity_b, entityId_b);
-            size_t idx = get_neighbor_index(neighborProcs, bulk.parallel_owner_rank(master));
+            stk::mesh::Entity monarch = get_entity_monarch(bulk, entity_b, entityId_b);
+            size_t idx = get_neighbor_index(neighborProcs, bulk.parallel_owner_rank(monarch));
             sendLengths[idx] += (1+numColEntities)*(sizeof(GlobalOrdinal)+sizeof(int));
         }
     } 
@@ -822,7 +821,7 @@ TpetraLinearSystem::compute_graph_row_lengths(const std::vector<stk::mesh::Entit
     for(size_t j=0; j<numColEntities; ++j) {
         stk::mesh::Entity colEntity = colEntities[j];
         colEntityIds[j] = *stk::mesh::field_data(*realm_.naluGlobalId_, colEntity);
-        colOwners[j] = bulk.parallel_owner_rank(get_entity_master(bulk, colEntity, colEntityIds[j]));
+        colOwners[j] = bulk.parallel_owner_rank(get_entity_monarch(bulk, colEntity, colEntityIds[j]));
     }
 
     const stk::mesh::EntityId entityId_a = *stk::mesh::field_data(*realm_.naluGlobalId_, entity_a);
@@ -830,8 +829,8 @@ TpetraLinearSystem::compute_graph_row_lengths(const std::vector<stk::mesh::Entit
     const int entity_a_status = getDofStatus(entity_a);
     const bool entity_a_owned = entity_a_status & DS_OwnedDOF;
     LocalOrdinal lid_a = entityToLID_[entity_a.local_offset()];
-    stk::mesh::Entity entity_a_master = get_entity_master(bulk, entity_a, entityId_a);
-    int entity_a_owner = bulk.parallel_owner_rank(entity_a_master);
+    stk::mesh::Entity entity_a_monarch = get_entity_monarch(bulk, entity_a, entityId_a);
+    int entity_a_owner = bulk.parallel_owner_rank(entity_a_monarch);
 
     add_to_length(deviceLocallyOwnedRowLengths, deviceSharedNotOwnedRowLengths, numDof_, lid_a, maxOwnedRowId_,
                   entity_a_owned, numColEntities);
@@ -965,9 +964,9 @@ TpetraLinearSystem::fill_entity_to_row_LID_mapping()
       if (iter != myLIDs_.end()) {
         entityToLID_[node.local_offset()] = iter->second;
         if (nodeIds[i] != bulk.identifier(node)) {
-          stk::mesh::Entity master = get_entity_master(bulk, node, nodeIds[i]);
-          if (master != node) {
-            entityToLID_[master.local_offset()] = entityToLID_[node.local_offset()];
+          stk::mesh::Entity monarch = get_entity_monarch(bulk, node, nodeIds[i]);
+          if (monarch != node) {
+            entityToLID_[monarch.local_offset()] = entityToLID_[node.local_offset()];
           }
         }
       }
@@ -1006,10 +1005,10 @@ TpetraLinearSystem::storeOwnersForShared()
       int status = getDofStatus(node);
       if (status & DS_SharedNotOwnedDOF) {
         stk::mesh::EntityId naluId = *stk::mesh::field_data(*realm_.naluGlobalId_, node);
-        stk::mesh::Entity master = get_entity_master(bulkData, node, naluId);
+        stk::mesh::Entity monarch = get_entity_monarch(bulkData, node, naluId);
         for(unsigned idof=0; idof < numDof_; ++ idof) {
           GlobalOrdinal gid = GID_(naluId, numDof_, idof);
-          ownersAndGids_.insert(std::make_pair(bulkData.parallel_owner_rank(master), gid));
+          ownersAndGids_.insert(std::make_pair(bulkData.parallel_owner_rank(monarch), gid));
         }
       }
     }
@@ -1459,10 +1458,10 @@ TpetraLinearSystem::sumInto(
 {
   constexpr bool forceAtomic = !std::is_same<sierra::nalu::DeviceSpace, Kokkos::Serial>::value;
 
-  ThrowAssertMsg(lhs.is_contiguous(), "LHS assumed contiguous");
-  ThrowAssertMsg(rhs.is_contiguous(), "RHS assumed contiguous");
-  ThrowAssertMsg(localIds.is_contiguous(), "localIds assumed contiguous");
-  ThrowAssertMsg(sortPermutation.is_contiguous(), "sortPermutation assumed contiguous");
+  ThrowAssertMsg(lhs.span_is_contiguous(), "LHS assumed contiguous");
+  ThrowAssertMsg(rhs.span_is_contiguous(), "RHS assumed contiguous");
+  ThrowAssertMsg(localIds.span_is_contiguous(), "localIds assumed contiguous");
+  ThrowAssertMsg(sortPermutation.span_is_contiguous(), "sortPermutation assumed contiguous");
 
   const int n_obj = numEntities;
   const int numRows = n_obj * numDof_;
@@ -2127,7 +2126,7 @@ TpetraLinearSystem::copy_tpetra_to_stk(
 
   const stk::mesh::Selector selector = stk::mesh::selectField(*stkField)
     & metaData.locally_owned_part() 
-    & !(stk::mesh::selectUnion(realm_.get_slave_part_vector()))
+    & !(stk::mesh::selectUnion(realm_.get_subject_part_vector()))
     & !(realm_.get_inactive_selector());
   
   stk::mesh::BucketVector const& buckets =
@@ -2180,37 +2179,47 @@ int getDofStatus_impl(stk::mesh::Entity node, const Realm& realm)
   const bool entityIsShared = b.shared();
   const bool entityIsGhosted = !entityIsOwned && !entityIsShared;
 
-  bool has_non_matching_boundary_face_alg = realm.has_non_matching_boundary_face_alg();
-  bool hasPeriodic = realm.hasPeriodic_;
+  bool nonConformalActive = realm.has_non_matching_boundary_face_alg();
+  bool periodicActive = realm.hasPeriodic_;
+  bool isPeriodicNode = false;
 
-  if (realm.hasPeriodic_ && realm.has_non_matching_boundary_face_alg()) {
-    has_non_matching_boundary_face_alg = false;
-    hasPeriodic = false;
+  // check if a node, which is associated with a row, is both periodic and non-conformal
+  if ( nonConformalActive && periodicActive ) {
 
-    stk::mesh::Selector perSel = stk::mesh::selectUnion(realm.allPeriodicInteractingParts_);
-    stk::mesh::Selector nonConfSel = stk::mesh::selectUnion(realm.allNonConformalInteractingParts_);
-    //std::cout << "nonConfSel= " << nonConfSel << std::endl;
+    // detailed check only if both options are active
 
-    for (auto part : b.supersets()) {
-      if (perSel(*part)) {
-        hasPeriodic = true;
-      }
-      if (nonConfSel(*part)) {
-        has_non_matching_boundary_face_alg = true;
+    bool isNonConformalNode = false;
+    if ( nonConformalActive ) {
+      stk::mesh::Selector nonConfSel = stk::mesh::selectUnion(realm.allNonConformalInteractingParts_);
+      for (auto part : b.supersets()) {
+        if (nonConfSel(*part)) {
+          isNonConformalNode = true;
+        }
       }
     }
+    
+    if ( periodicActive ) {
+      stk::mesh::Selector perSel = stk::mesh::selectUnion(realm.allPeriodicInteractingParts_);
+      for (auto part : b.supersets()) {
+        if (perSel(*part)) {
+          isPeriodicNode = true;
+        }
+      }
+    }
+    
+    if (isNonConformalNode && isPeriodicNode) {
+      std::ostringstream ostr;
+      ostr << "node id= " << realm.bulkData_->identifier(node);
+      throw std::logic_error("not ready for primetime to combine periodic and non-matching algorithm on same node: "+ostr.str());
+    }
   }
-
-  //std::cerr << "has_non_matching_boundary_face_alg= " << has_non_matching_boundary_face_alg << " hasPeriodic= " << hasPeriodic << std::endl;
-
-  if (has_non_matching_boundary_face_alg && hasPeriodic) {
-    std::ostringstream ostr;
-    ostr << "node id= " << realm.bulkData_->identifier(node);
-    throw std::logic_error("not ready for primetime to combine periodic and non-matching algorithm on same node: "+ostr.str());
+  else {
+    // both are not active; assign periodicNode to periodicActive status
+    isPeriodicNode = periodicActive;
   }
-
+  
   // simple case
-  if (!hasPeriodic && !has_non_matching_boundary_face_alg) {
+  if (!isPeriodicNode  && !nonConformalActive) {
     if (entityIsGhosted)
       return DS_GhostedDOF;
     if (entityIsOwned)
@@ -2219,34 +2228,25 @@ int getDofStatus_impl(stk::mesh::Entity node, const Realm& realm)
       return DS_SharedNotOwnedDOF;
   }
 
-  if (has_non_matching_boundary_face_alg) {
-    if (entityIsOwned)
-      return DS_OwnedDOF;
-    //if (entityIsShared && !entityIsOwned) {
-    if (!entityIsOwned && (entityIsGhosted || entityIsShared)){
-      return DS_SharedNotOwnedDOF;
-    }
-    // maybe return DS_GhostedDOF if entityIsGhosted
-  }
-
-  if (hasPeriodic) {
+  // more complex case; this node is a periodic node, however, absolutely not a non-conformal [face] node
+  if ( isPeriodicNode ) {
     const stk::mesh::EntityId stkId = bulkData.identifier(node);
     const stk::mesh::EntityId naluId = *stk::mesh::field_data(*realm.naluGlobalId_, node);
-
+    
     // bool for type of ownership for this node
     const bool nodeOwned = bulkData.bucket(node).owned();
     const bool nodeShared = bulkData.bucket(node).shared();
     const bool nodeGhosted = !nodeOwned && !nodeShared;
-
+    
     // really simple here.. ghosted nodes never part of the matrix
     if ( nodeGhosted ) {
       return DS_GhostedDOF;
     }
-
+    
     // bool to see if this is possibly a periodic node
-    const bool isSlaveNode = (stkId != naluId);
-
-    if (!isSlaveNode) {
+    const bool isSubjectNode = (stkId != naluId);
+    
+    if (!isSubjectNode) {
       if (nodeOwned)
         return DS_OwnedDOF;
       else if( nodeShared )
@@ -2255,14 +2255,14 @@ int getDofStatus_impl(stk::mesh::Entity node, const Realm& realm)
         return DS_GhostedDOF;
     }
     else {
-      // I am a slave node.... get the master entity
-      stk::mesh::Entity masterEntity = bulkData.get_entity(stk::topology::NODE_RANK, naluId);
-      if ( bulkData.is_valid(masterEntity)) {
-        const bool masterEntityOwned = bulkData.bucket(masterEntity).owned();
-        const bool masterEntityShared = bulkData.bucket(masterEntity).shared();
-        if (masterEntityOwned)
+      // I am a subject node.... get the monarch entity
+      stk::mesh::Entity monarchEntity = bulkData.get_entity(stk::topology::NODE_RANK, naluId);
+      if ( bulkData.is_valid(monarchEntity)) {
+        const bool monarchEntityOwned = bulkData.bucket(monarchEntity).owned();
+        const bool monarchEntityShared = bulkData.bucket(monarchEntity).shared();
+        if (monarchEntityOwned)
           return DS_SkippedDOF | DS_OwnedDOF;
-        if (masterEntityShared)
+        if (monarchEntityShared)
           return DS_SkippedDOF | DS_SharedNotOwnedDOF;
         else
           return DS_SharedNotOwnedDOF;
@@ -2272,7 +2272,16 @@ int getDofStatus_impl(stk::mesh::Entity node, const Realm& realm)
       }
     }
   }
-
+  
+  // finally, if non conformal is active
+  if ( nonConformalActive ) {
+    if (entityIsOwned)
+      return DS_OwnedDOF;
+    if (!entityIsOwned && (entityIsGhosted || entityIsShared)){
+      return DS_SharedNotOwnedDOF; // note shared overload
+    }
+  }
+  
   // still got here? problem...
   if (1)
     throw std::logic_error("bad status2");

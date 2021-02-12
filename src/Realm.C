@@ -381,7 +381,7 @@ Realm::convert_bytes(double bytes)
 }
 
 //--------------------------------------------------------------------------
-//-------- initialize -----------------------------------------------
+//-------- initialize ------------------------------------------------------
 //--------------------------------------------------------------------------
 void
 Realm::initialize()
@@ -469,6 +469,9 @@ Realm::initialize()
 
   populate_boundary_data();
 
+  if ( solutionOptions_->initialMeshDisplacement_ )
+    process_initial_displacement();
+  
   if ( solutionOptions_->meshMotion_ )
     process_mesh_motion();
 
@@ -478,13 +481,13 @@ Realm::initialize()
   if ( hasPeriodic_ )
     periodicManager_->build_constraints();
 
+  if ( hasOverset_ )
+    initialize_overset();
+
   compute_geometry();
 
   if ( hasNonConformal_ )
     initialize_non_conformal();
-
-  if ( hasOverset_ )
-    initialize_overset();
 
   initialize_post_processing_algorithms();
 
@@ -870,9 +873,9 @@ Realm::setup_bc()
         ThrowAssert(reinterpret_cast<const PeriodicBoundaryConditionData *>(&bc) != nullptr);
         const auto& pbc = (*reinterpret_cast<const PeriodicBoundaryConditionData *>(&bc));
 
-        std::string masterName = physics_part_name(pbc.masterSlave_.master_);
-        std::string slaveName = physics_part_name(pbc.masterSlave_.slave_);
-        equationSystems_.register_periodic_bc(masterName, slaveName, pbc);
+        std::string monarchName = physics_part_name(pbc.monarchSubject_.monarch_);
+        std::string subjectName = physics_part_name(pbc.monarchSubject_.subject_);
+        equationSystems_.register_periodic_bc(monarchName, subjectName, pbc);
         break;
       }
       case NON_CONFORMAL_BC:
@@ -986,8 +989,10 @@ Realm::setup_initial_conditions()
 
             std::vector<double>  genSpec = genIC.data_[ifield];
             stk::mesh::FieldBase *field = stk::mesh::get_field_by_name(genIC.fieldNames_[ifield], *metaData_);
-            ThrowAssert(field);
-      
+
+            if ( nullptr == field )
+              throw std::runtime_error("Realm::setup_initial_conditions: field is null: " + genIC.fieldNames_[ifield]);
+
             stk::mesh::FieldBase *fieldWithState = ( field->number_of_states() > 1 )
               ? field->field_state(stk::mesh::StateNP1)
               : field->field_state(stk::mesh::StateNone);
@@ -1816,7 +1821,7 @@ Realm::create_output_mesh()
 }
 
 //--------------------------------------------------------------------------
-//-------- create_restart_mesh() --------------------------------------------
+//-------- create_restart_mesh() -------------------------------------------
 //--------------------------------------------------------------------------
 void
 Realm::create_restart_mesh()
@@ -1864,7 +1869,7 @@ Realm::create_restart_mesh()
 }
 
 //--------------------------------------------------------------------------
-//-------- input_variables_from_mesh() --------------------------------------------
+//-------- input_variables_from_mesh() -------------------------------------
 //--------------------------------------------------------------------------
 void
 Realm::input_variables_from_mesh()
@@ -1925,7 +1930,7 @@ Realm::augment_restart_variable_list(
 }
 
 //--------------------------------------------------------------------------
-//-------- create_edges -----------------------------------------------
+//-------- create_edges ----------------------------------------------------
 //--------------------------------------------------------------------------
 void
 Realm::create_edges()
@@ -2000,12 +2005,12 @@ Realm::initialize_post_processing_algorithms()
 }
 
 //--------------------------------------------------------------------------
-//-------- get_coordinates_name ---------------------------------------------
+//-------- get_coordinates_name --------------------------------------------
 //--------------------------------------------------------------------------
 std::string
 Realm::get_coordinates_name()
 {
-  return ( (solutionOptions_->meshMotion_ | solutionOptions_->meshDeformation_ | solutionOptions_->externalMeshDeformation_) 
+  return ( (solutionOptions_->meshMotion_ | solutionOptions_->meshDeformation_ | solutionOptions_->externalMeshDeformation_ | solutionOptions_->initialMeshDisplacement_) 
            ? "current_coordinates" : "coordinates");
 }
 
@@ -2275,6 +2280,120 @@ Realm::set_current_displacement(
 }
 
 //--------------------------------------------------------------------------
+//-------- process_initial_displacement ------------------------------------
+//--------------------------------------------------------------------------
+void
+Realm::process_initial_displacement()
+{
+  std::cout << "Realm::process_initial_displacement()  " << std::endl;
+  // extract parameters
+  std::map<std::string, MeshMotionInfo *>::const_iterator iter;
+  for ( iter = solutionOptions_->initialMeshDisplacementInfoMap_.begin();
+        iter != solutionOptions_->initialMeshDisplacementInfoMap_.end(); ++iter) {
+    
+    // extract mesh info object
+    MeshMotionInfo *meshInfo = iter->second;
+    
+    // mesh displacement block, centroid coordinates
+    std::vector<std::string> meshMotionBlock = meshInfo->meshMotionBlock_;
+    std::vector<double> unitVec = meshInfo->unitVec_;
+    
+    // extract compute centroid option
+    const bool computeCentroid = meshInfo->computeCentroid_;
+    if ( computeCentroid ) {
+      NaluEnv::self().naluOutputP0() << "Realm::process_initial_displacement() Centroid for: " << iter->first << std::endl;
+      compute_centroid_on_parts(meshMotionBlock, meshInfo->centroid_);
+      // tell the user
+      const int nDim = metaData_->spatial_dimension();
+      for ( int j = 0; j < nDim; ++j ) {
+        NaluEnv::self().naluOutputP0() << "  centroid[" << j << "] = " << meshInfo->centroid_[j] <<  std::endl;
+      }
+    }
+    
+    // proceed with setting mesh motion information on the Nalu mesh
+    for (size_t k = 0; k < meshMotionBlock.size(); ++k ) {
+      
+      stk::mesh::Part *targetPart = metaData_->get_part(meshMotionBlock[k]);
+      
+      if ( NULL == targetPart ) {
+        throw std::runtime_error("Realm::process_mesh_motion() Error Error, no part name found" + meshMotionBlock[k]);
+      }
+      else {
+        set_initial_displacement(targetPart, meshInfo->centroid_, unitVec, meshInfo->theAngle_);
+        set_current_coordinates(targetPart);
+      }
+    }
+  }
+}
+
+//--------------------------------------------------------------------------
+//-------- set_initial_displacement ----------------------------------------
+//--------------------------------------------------------------------------
+void
+Realm::set_initial_displacement(
+  stk::mesh::Part *targetPart,
+  const std::vector<double> &centroidCoords,
+  const std::vector<double> &unitVec,
+  const double theAngle)
+{
+  std::cout << "Realm::set_initial_displacement() " << std::endl;
+  const int nDim = metaData_->spatial_dimension();
+
+  // convert to radians
+  const double theAngleInRad = theAngle*std::acos(-1.0)/180.0;
+  
+  // local space; Nalu current coords and rotated coords; generalized for 2D and 3D
+  double mcX[3] = {0.0,0.0,0.0};
+  double rcX[3] = {0.0,0.0,0.0};
+  
+  VectorFieldType *modelCoords = metaData_->get_field<VectorFieldType>(stk::topology::NODE_RANK, "coordinates");
+  VectorFieldType *displacement = metaData_->get_field<VectorFieldType>(stk::topology::NODE_RANK, "mesh_displacement");
+ 
+  stk::mesh::Selector s_all_nodes = stk::mesh::Selector(*targetPart);
+
+  stk::mesh::BucketVector const& node_buckets = bulkData_->get_buckets( stk::topology::NODE_RANK, s_all_nodes );
+
+  for ( stk::mesh::BucketVector::const_iterator ib = node_buckets.begin() ;
+        ib != node_buckets.end() ; ++ib ) {
+    stk::mesh::Bucket & b = **ib ;
+    const stk::mesh::Bucket::size_type length   = b.size();
+    const double * mCoords = stk::mesh::field_data(*modelCoords, b);
+    double * dx = stk::mesh::field_data(*displacement, b);
+    for ( stk::mesh::Bucket::size_type k = 0 ; k < length ; ++k ) {
+
+      const int kNdim = k*nDim;
+    
+      // load the current and model coords
+      for ( int i = 0; i < nDim; ++i ) {
+        mcX[i] = mCoords[kNdim+i];
+      }
+
+      const double cX = mcX[0] - centroidCoords[0];
+      const double cY = mcX[1] - centroidCoords[1];
+      const double cZ = mcX[2] - centroidCoords[2];
+
+      const double sinOTby2 = sin(theAngleInRad*0.5);
+      const double cosOTby2 = cos(theAngleInRad*0.5);
+      
+      const double q0 = cosOTby2;
+      const double q1 = sinOTby2*unitVec[0];
+      const double q2 = sinOTby2*unitVec[1];
+      const double q3 = sinOTby2*unitVec[2];    
+      
+      // rotated model coordinates; converted to displacement; add back in centroid
+      rcX[0] = (q0*q0 + q1*q1 - q2*q2 - q3*q3)*cX + 2.0*(q1*q2 - q0*q3)*cY + 2.0*(q0*q2 + q1*q3)*cZ - mcX[0] + centroidCoords[0];
+      rcX[1] = 2.0*(q1*q2 + q0*q3)*cX + (q0*q0 - q1*q1 + q2*q2 - q3*q3)*cY + 2.0*(q2*q3 - q0*q1)*cZ - mcX[1] + centroidCoords[1];
+      rcX[2] = 2.0*(q1*q3 - q0*q2)*cX + 2.0*(q0*q1 + q2*q3)*cY + (q0*q0 - q1*q1 - q2*q2 + q3*q3)*cZ - mcX[2] + centroidCoords[2];
+
+      // set displacement
+      for ( int i = 0; i < nDim; ++i ) {
+        dx[kNdim+i] = rcX[i];
+      }
+    }
+  }
+}
+
+//--------------------------------------------------------------------------
 //-------- set_current_coordinates -----------------------------------------
 //--------------------------------------------------------------------------
 void
@@ -2299,8 +2418,9 @@ Realm::set_current_coordinates(
     const double * dx = stk::mesh::field_data(*displacement, b);
     for ( stk::mesh::Bucket::size_type k = 0 ; k < length ; ++k ) {
       const int offSet = k*nDim;
-      for ( int j = 0; j < nDim; ++j )
+      for ( int j = 0; j < nDim; ++j ) {
         cCoords[offSet+j] = mCoords[offSet+j] + dx[offSet+j];
+      }
     }
   }
 }
@@ -2459,7 +2579,7 @@ Realm::compute_vrtm()
 }
 
 //--------------------------------------------------------------------------
-//-------- init_current_coordinates -----------------------------------------
+//-------- init_current_coordinates ----------------------------------------
 //--------------------------------------------------------------------------
 void
 Realm::init_current_coordinates()
@@ -2563,6 +2683,14 @@ Realm::register_nodal_fields(
       stk::mesh::put_field_on_mesh(*divV, *part, nullptr);
     }
   }
+  
+  if ( solutionOptions_->initialMeshDisplacement_ ) {
+    // initialize to zero
+    VectorFieldType *displacement = &(metaData_->declare_field<VectorFieldType>(stk::topology::NODE_RANK, "mesh_displacement"));
+    stk::mesh::put_field_on_mesh(*displacement, *part, nDim, nullptr);
+    VectorFieldType *currentCoords = &(metaData_->declare_field<VectorFieldType>(stk::topology::NODE_RANK, "current_coordinates"));
+    stk::mesh::put_field_on_mesh(*currentCoords, *part, nDim, nullptr);
+  }
 }
 
 //--------------------------------------------------------------------------
@@ -2637,7 +2765,7 @@ Realm::register_wall_bc(
 }
 
 //--------------------------------------------------------------------------
-//-------- register_inflow_bc ------------------------------------------------
+//-------- register_inflow_bc ----------------------------------------------
 //--------------------------------------------------------------------------
 void
 Realm::register_inflow_bc(
@@ -2761,17 +2889,17 @@ Realm::register_symmetry_bc(
 //--------------------------------------------------------------------------
 void
 Realm::register_periodic_bc(
-  stk::mesh::Part *masterMeshPart,
-  stk::mesh::Part *slaveMeshPart,
+  stk::mesh::Part *monarchMeshPart,
+  stk::mesh::Part *subjectMeshPart,
   const double &searchTolerance,
   const std::string &searchMethodName)
 {
-  allPeriodicInteractingParts_.push_back(masterMeshPart);
-  allPeriodicInteractingParts_.push_back(slaveMeshPart);
+  allPeriodicInteractingParts_.push_back(monarchMeshPart);
+  allPeriodicInteractingParts_.push_back(subjectMeshPart);
 
   // push back the part for book keeping and, later, skin mesh
-  bcPartVec_.push_back(masterMeshPart);
-  bcPartVec_.push_back(slaveMeshPart);
+  bcPartVec_.push_back(monarchMeshPart);
+  bcPartVec_.push_back(subjectMeshPart);
 
   if ( NULL == periodicManager_ ) {
     periodicManager_ = new PeriodicManager(*this);
@@ -2779,7 +2907,7 @@ Realm::register_periodic_bc(
   }
 
   // add the parts to the manager
-  periodicManager_->add_periodic_pair(masterMeshPart, slaveMeshPart, searchTolerance, searchMethodName);
+  periodicManager_->add_periodic_pair(monarchMeshPart, subjectMeshPart, searchTolerance, searchMethodName);
 }
 
 //--------------------------------------------------------------------------
@@ -2910,15 +3038,15 @@ void
 Realm::periodic_field_update(
   stk::mesh::FieldBase *theField,
   const unsigned &sizeOfField,
-  const bool &bypassFieldCheck) const
+  const bool bypassFieldCheck,
+  const bool addSubjects,
+  const bool setSubjects) const
 {
-  const bool addSlaves = true;
-  const bool setSlaves = true;
-  periodicManager_->apply_constraints(theField, sizeOfField, bypassFieldCheck, addSlaves, setSlaves);
+  periodicManager_->apply_constraints(theField, sizeOfField, bypassFieldCheck, addSubjects, setSubjects);
 }
 
 //--------------------------------------------------------------------------
-//-------- periodic_delta_solution_update -------------------------------------------
+//-------- periodic_delta_solution_update ----------------------------------
 //--------------------------------------------------------------------------
 void
 Realm::periodic_delta_solution_update(
@@ -2926,9 +3054,9 @@ Realm::periodic_delta_solution_update(
   const unsigned &sizeOfField) const
 {
   const bool bypassFieldCheck = true;
-  const bool addSlaves = false;
-  const bool setSlaves = true;
-  periodicManager_->apply_constraints(theField, sizeOfField, bypassFieldCheck, addSlaves, setSlaves);
+  const bool addSubjects = false;
+  const bool setSubjects = true;
+  periodicManager_->apply_constraints(theField, sizeOfField, bypassFieldCheck, addSubjects, setSubjects);
 }
 
 //--------------------------------------------------------------------------
@@ -2943,20 +3071,20 @@ Realm::periodic_max_field_update(
 }
 
 //--------------------------------------------------------------------------
-//-------- get_slave_part_vector -------------------------------------------
+//-------- get_subject_part_vector -----------------------------------------
 //--------------------------------------------------------------------------
 const stk::mesh::PartVector &
-Realm::get_slave_part_vector()
+Realm::get_subject_part_vector()
 {
   if ( hasPeriodic_)
-    return periodicManager_->get_slave_part_vector();
+    return periodicManager_->get_subject_part_vector();
   else
     return emptyPartVector_;
 }
 
 
 //--------------------------------------------------------------------------
-//-------- overset_field_update -------------------------------------------
+//-------- overset_field_update --------------------------------------------
 //--------------------------------------------------------------------------
 void
 Realm::overset_orphan_node_field_update(
@@ -3222,7 +3350,7 @@ Realm::populate_derived_quantities()
 }
 
 //--------------------------------------------------------------------------
-//-------- initial_work -----------------------------------------------------
+//-------- initial_work ----------------------------------------------------
 //--------------------------------------------------------------------------
 void
 Realm::initial_work()
@@ -3614,7 +3742,7 @@ Realm::get_alpha_upw_factor(
 }
 
 //--------------------------------------------------------------------------
-//-------- get_upw_factor ------------------------------------------------
+//-------- get_upw_factor --------------------------------------------------
 //--------------------------------------------------------------------------
 double
 Realm::get_upw_factor(
@@ -3833,7 +3961,7 @@ Realm::get_cvfem_shifted_mdot()
 }
 
 //--------------------------------------------------------------------------
-//-------- get_cvfem_reduced_sens_poisson ---------------------------------------
+//-------- get_cvfem_reduced_sens_poisson ----------------------------------
 //--------------------------------------------------------------------------
 bool
 Realm::get_cvfem_reduced_sens_poisson()
@@ -4019,7 +4147,7 @@ Realm::process_initialization_transfer()
 }
 
 //--------------------------------------------------------------------------
-//-------- process_io_transfer ------------------------------------------------
+//-------- process_io_transfer ---------------------------------------------
 //--------------------------------------------------------------------------
 void
 Realm::process_io_transfer()
@@ -4083,7 +4211,7 @@ Realm::post_converged_work()
 }
 
 //--------------------------------------------------------------------------
-//-------- part_name(std::string) ----------------------------------------------
+//-------- part_name(std::string) ------------------------------------------
 //--------------------------------------------------------------------------
 std::string
 Realm::physics_part_name(std::string name) const
@@ -4107,7 +4235,7 @@ Realm::get_current_time()
 }
 
 //--------------------------------------------------------------------------
-//-------- get_time_step() ----------------------------------------------
+//-------- get_time_step() -------------------------------------------------
 //--------------------------------------------------------------------------
 double
 Realm::get_time_step()
@@ -4168,7 +4296,7 @@ Realm::get_gamma3()
 }
 
 //--------------------------------------------------------------------------
-//-------- get_time_step_count() ----------------------------------------------
+//-------- get_time_step_count() -------------------------------------------
 //--------------------------------------------------------------------------
 int
 Realm::get_time_step_count() const
@@ -4204,7 +4332,7 @@ Realm::get_stefan_boltzmann()
 }
 
 //--------------------------------------------------------------------------
-//-------- get_turb_model_constant() ------------------------------------------
+//-------- get_turb_model_constant() ---------------------------------------
 //--------------------------------------------------------------------------
 double
 Realm::get_turb_model_constant(
@@ -4221,7 +4349,7 @@ Realm::get_turb_model_constant(
 }
 
 //--------------------------------------------------------------------------
-//-------- get_buckets() ----------------------------------------------
+//-------- get_buckets() ---------------------------------------------------
 //--------------------------------------------------------------------------
 stk::mesh::BucketVector const& Realm::get_buckets( 
   stk::mesh::EntityRank rank,
@@ -4261,7 +4389,7 @@ Realm::meta_data() const
 }
 
 //--------------------------------------------------------------------------
-//-------- get_activate_aura() -----------------------------------------------------
+//-------- get_activate_aura() ---------------------------------------------
 //--------------------------------------------------------------------------
 bool
 Realm::get_activate_aura()

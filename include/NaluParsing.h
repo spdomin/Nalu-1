@@ -63,6 +63,13 @@ struct SpecDissRate {
   {}
 };
 
+struct TurbDiss {
+  double turbDiss_;
+  TurbDiss()
+    : turbDiss_(0.0)
+  {}
+};
+
 struct Temperature {
   double temperature_;
   Temperature()
@@ -162,10 +169,10 @@ struct NormalTemperatureGradient {
   {}
 };
 
-struct MasterSlave {
-  std::string master_;
-  std::string slave_;
-  MasterSlave() {}
+struct MonarchSubject {
+  std::string monarch_;
+  std::string subject_;
+  MonarchSubject() {}
 };
 
 // packaged
@@ -196,7 +203,8 @@ struct WallUserData : public UserData {
   bool emissSpec_;
 
   bool wallFunctionApproach_;
-  bool ablWallFunctionApproach_;
+  bool wallFunctionProjectedApproach_;
+  double projectedDistance_;
 
   bool isFsiInterface_;
 
@@ -211,7 +219,8 @@ struct WallUserData : public UserData {
       robinParameterSpec_(false),
       irradSpec_(false),
       wallFunctionApproach_(false),
-      ablWallFunctionApproach_(false),
+      wallFunctionProjectedApproach_(false),
+      projectedDistance_(1.0),
       isFsiInterface_(false) {}    
 };
 
@@ -219,17 +228,19 @@ struct InflowUserData : public UserData {
   Velocity u_;
   TurbKinEnergy tke_;
   SpecDissRate sdr_;
+  TurbDiss eps_;
   MixtureFraction mixFrac_;
   MassFraction massFraction_;
  
   bool uSpec_;
   bool tkeSpec_;
   bool sdrSpec_;
+  bool epsSpec_;
   bool mixFracSpec_;
   bool massFractionSpec_;
   InflowUserData()
     : UserData(),
-    uSpec_(false), tkeSpec_(false), sdrSpec_(false), mixFracSpec_(false), massFractionSpec_(false)
+    uSpec_(false), tkeSpec_(false), sdrSpec_(false), epsSpec_(false), mixFracSpec_(false), massFractionSpec_(false)
   {}
 };
 
@@ -238,6 +249,7 @@ struct OpenUserData : public UserData {
   Pressure p_;
   TurbKinEnergy tke_;
   SpecDissRate sdr_;
+  TurbDiss eps_;
   MixtureFraction mixFrac_;
   MassFraction massFraction_;
  
@@ -245,6 +257,7 @@ struct OpenUserData : public UserData {
   bool pSpec_;
   bool tkeSpec_;
   bool sdrSpec_;
+  bool epsSpec_;
   bool mixFracSpec_;
   bool massFractionSpec_;
   
@@ -252,7 +265,7 @@ struct OpenUserData : public UserData {
 
   OpenUserData()
     : UserData(),
-    uSpec_(false), pSpec_(false), tkeSpec_(false), sdrSpec_(false), mixFracSpec_(false), massFractionSpec_(false), useTotalP_(false)
+    uSpec_(false), pSpec_(false), tkeSpec_(false), sdrSpec_(false), epsSpec_(false), mixFracSpec_(false), massFractionSpec_(false), useTotalP_(false)
   {}
 };
 
@@ -373,7 +386,7 @@ struct SymmetryBoundaryConditionData : public BoundaryCondition {
 
 struct PeriodicBoundaryConditionData : public BoundaryCondition {
   PeriodicBoundaryConditionData(BoundaryConditions& bcs) : BoundaryCondition(bcs){};
-  MasterSlave masterSlave_;
+  MonarchSubject monarchSubject_;
   PeriodicUserData userData_;
 };
 
@@ -524,6 +537,10 @@ template<> struct convert<sierra::nalu::SpecDissRate> {
   static bool decode(const Node& node, sierra::nalu::SpecDissRate& rhs) ;
 };
 
+template<> struct convert<sierra::nalu::TurbDiss> {
+  static bool decode(const Node& node, sierra::nalu::TurbDiss& rhs) ;
+};
+
 template<> struct convert<sierra::nalu::Temperature> {
   static bool decode(const Node& node, sierra::nalu::Temperature& rhs) ;
 };
@@ -576,8 +593,8 @@ template<> struct convert<sierra::nalu::NormalTemperatureGradient> {
   static bool decode(const Node& node, sierra::nalu::NormalTemperatureGradient& rhs) ;
 };
 
-template<> struct convert<sierra::nalu::MasterSlave> {
-  static bool decode(const Node& node, sierra::nalu::MasterSlave& rhs) ;
+template<> struct convert<sierra::nalu::MonarchSubject> {
+  static bool decode(const Node& node, sierra::nalu::MonarchSubject& rhs) ;
 };
 
 template<> struct convert<sierra::nalu::WallUserData> {

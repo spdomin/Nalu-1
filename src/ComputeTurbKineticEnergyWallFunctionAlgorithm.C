@@ -117,7 +117,7 @@ ComputeTurbKineticEnergyWallFunctionAlgorithm::execute()
         }
         aMag = std::sqrt(aMag);
 
-        // extract utau and compute wall valu for tke
+        // extract utau and compute wall value for tke
         const double utau = wallFrictionVelocityBip[ip];
         const double tkeBip = utau*utau/std::sqrt(cMu_);
         // assemble to nodal quantities
@@ -176,7 +176,7 @@ ComputeTurbKineticEnergyWallFunctionAlgorithm::normalize_nodal_fields()
   // periodic assemble
   if ( realm_.hasPeriodic_) {
     const unsigned fieldSize = 1;
-    const bool bypassFieldCheck = false; // fields are not defined at all slave/master node pairs
+    const bool bypassFieldCheck = false;
     realm_.periodic_field_update(bcAssembledTurbKineticEnergy_, fieldSize, bypassFieldCheck);
   }
 

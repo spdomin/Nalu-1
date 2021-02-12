@@ -151,7 +151,7 @@ class Realm {
 
   // overset boundary condition requires elemental field registration
   bool query_for_overset();
-
+  
   void set_omega(
     stk::mesh::Part *targetPart,
     double omega);
@@ -166,6 +166,14 @@ class Realm {
     const std::vector<double> &centroidCoords,
     const std::vector<double> &unitVec);
   void mesh_velocity_cross_product(double *o, double *c, double *u);
+
+  // allow for a single mesh displacement (coords change, however, mesh motion fixed)
+  void process_initial_displacement();
+  void set_initial_displacement(
+    stk::mesh::Part *targetPart,
+    const std::vector<double> &centroidCoords,
+    const std::vector<double> &unitVec,
+    const double theAngle);
 
   // non-conformal-like algorithm suppoer
   void initialize_non_conformal();
@@ -202,8 +210,8 @@ class Realm {
     const stk::topology &theTopo);
 
   void register_periodic_bc(
-    stk::mesh::Part *masterMeshPart,
-    stk::mesh::Part *slaveMeshPart,
+    stk::mesh::Part *monarchMeshPart,
+    stk::mesh::Part *subjectMeshPart,
     const double &searchTolerance,
     const std::string &searchMethodName);
 
@@ -222,7 +230,9 @@ class Realm {
   void periodic_field_update(
     stk::mesh::FieldBase *theField,
     const unsigned &sizeOfTheField,
-    const bool &bypassFieldCheck = true) const;
+    const bool bypassFieldCheck = true,
+    const bool addSubject = true,
+    const bool setSubjects = true) const;
 
   void periodic_delta_solution_update(
      stk::mesh::FieldBase *theField,
@@ -232,7 +242,7 @@ class Realm {
      stk::mesh::FieldBase *theField,
      const unsigned &sizeOfField) const;
 
-  const stk::mesh::PartVector &get_slave_part_vector();
+  const stk::mesh::PartVector &get_subject_part_vector();
 
   void overset_orphan_node_field_update(
     stk::mesh::FieldBase *theField,

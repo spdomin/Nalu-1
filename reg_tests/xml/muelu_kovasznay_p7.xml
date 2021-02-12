@@ -1,6 +1,7 @@
 <ParameterList name="MueLu">
   <Parameter        name="verbosity"                        type="string"   value="none"/>
   <Parameter        name="coarse: max size"                 type="int"      value="225"/>
+  <Parameter        name="coarse: type"                     type="string"   value="klu2"/>
 
   <Parameter        name="smoother: type"                   type="string"   value="CHEBYSHEV"/>
   <ParameterList    name="smoother: params">
@@ -11,6 +12,8 @@
      <Parameter name="chebyshev: eigenvalue max iterations" type="int"      value="20"/>
   </ParameterList>
 
+  <Parameter        name="aggregation: phase2a include root" type="bool"   value="false"/>
+ 
   <Parameter        name="repartition: enable"              type="bool"     value="true"/>
   <Parameter        name="repartition: min rows per proc"   type="int"      value="1000"/>
   <Parameter        name="repartition: start level"         type="int"      value="2"/>

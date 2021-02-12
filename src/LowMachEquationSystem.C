@@ -23,6 +23,7 @@
 #include "AssembleMomentumElemSymmetrySolverAlgorithm.h"
 #include "AssembleMomentumEdgeWallFunctionSolverAlgorithm.h"
 #include "AssembleMomentumElemWallFunctionSolverAlgorithm.h"
+#include "AssembleMomentumElemWallFunctionProjectedSolverAlgorithm.h"
 #include "AssembleMomentumNonConformalSolverAlgorithm.h"
 #include "AssembleNodalGradAlgorithmDriver.h"
 #include "AssembleNodalGradEdgeAlgorithm.h"
@@ -46,6 +47,7 @@
 #include "ComputeMdotElemOpenAlgorithm.h"
 #include "ComputeMdotNonConformalAlgorithm.h"
 #include "ComputeWallFrictionVelocityAlgorithm.h"
+#include "ComputeWallFrictionVelocityProjectedAlgorithm.h"
 #include "ConstantAuxFunction.h"
 #include "ContinuityGclNodeSuppAlg.h"
 #include "ContinuityLowSpeedCompressibleNodeSuppAlg.h"
@@ -76,12 +78,14 @@
 #include "PstabErrorIndicatorEdgeAlgorithm.h"
 #include "PstabErrorIndicatorElemAlgorithm.h"
 #include "LimiterErrorIndicatorElemAlgorithm.h"
+#include "PointInfo.h"
 #include "SimpleErrorIndicatorElemAlgorithm.h"
 #include "Realm.h"
 #include "Realms.h"
 #include "SurfaceForceAndMomentAlgorithmDriver.h"
 #include "SurfaceForceAndMomentAlgorithm.h"
 #include "SurfaceForceAndMomentWallFunctionAlgorithm.h"
+#include "SurfaceForceAndMomentWallFunctionProjectedAlgorithm.h"
 #include "Simulation.h"
 #include "SolutionOptions.h"
 #include "SolverAlgorithmDriver.h"
@@ -89,6 +93,7 @@
 #include "TurbViscSmagorinskyAlgorithm.h"
 #include "TurbViscSSTAlgorithm.h"
 #include "TurbViscWaleAlgorithm.h"
+#include "TurbViscKEpsilonAlgorithm.h"
 #include "FixPressureAtNodeAlgorithm.h"
 #include "FixPressureAtNodeInfo.h"
 #include "WallFunctionParamsAlgorithmDriver.h"
@@ -511,7 +516,7 @@ LowMachEquationSystem::register_open_bc(
 }
 
 //--------------------------------------------------------------------------
-//-------- register_surface_pp_algorithm ----------------------
+//-------- register_surface_pp_algorithm -----------------------------------
 //--------------------------------------------------------------------------
 void
 LowMachEquationSystem::register_surface_pp_algorithm(
@@ -534,28 +539,62 @@ LowMachEquationSystem::register_surface_pp_algorithm(
   realm_.augment_output_variable_list(tauWall->name());
   realm_.augment_output_variable_list(yplus->name());
 
-
+  // extract frequency
+  int currentFrequency = 0;
+  int savedFrequency = 0;
+  
   if ( thePhysics == "surface_force_and_moment" ) {
+    // extract appropriate frequency
+    currentFrequency = theData.frequency_;
     ScalarFieldType *assembledArea =  &(meta_data.declare_field<ScalarFieldType>(stk::topology::NODE_RANK, "assembled_area_force_moment"));
     stk::mesh::put_field_on_mesh(*assembledArea, stk::mesh::selectUnion(partVector), nullptr);
-    if ( NULL == surfaceForceAndMomentAlgDriver_ )
-      surfaceForceAndMomentAlgDriver_ = new SurfaceForceAndMomentAlgorithmDriver(realm_);
+    if ( nullptr == surfaceForceAndMomentAlgDriver_ )
+      surfaceForceAndMomentAlgDriver_ = new SurfaceForceAndMomentAlgorithmDriver(realm_, currentFrequency);
     SurfaceForceAndMomentAlgorithm *ppAlg
       = new SurfaceForceAndMomentAlgorithm(
-          realm_, partVector, theData.outputFileName_, theData.frequency_,
-          theData.parameters_, realm_.realmUsesEdges_);
+          realm_, partVector, theData.outputFileName_,
+          theData.parameters_, realm_.realmUsesEdges_, assembledArea);
     surfaceForceAndMomentAlgDriver_->algVec_.push_back(ppAlg);
+    savedFrequency = surfaceForceAndMomentAlgDriver_->get_frequency();
   }
   else if ( thePhysics == "surface_force_and_moment_wall_function" ) {
+    // extract appropriate frequency
+    currentFrequency = theData.frequency_;
     ScalarFieldType *assembledArea =  &(meta_data.declare_field<ScalarFieldType>(stk::topology::NODE_RANK, "assembled_area_force_moment_wf"));
     stk::mesh::put_field_on_mesh(*assembledArea, stk::mesh::selectUnion(partVector), nullptr);
-    if ( NULL == surfaceForceAndMomentAlgDriver_ )
-      surfaceForceAndMomentAlgDriver_ = new SurfaceForceAndMomentAlgorithmDriver(realm_);
+    if ( nullptr == surfaceForceAndMomentAlgDriver_ )
+      surfaceForceAndMomentAlgDriver_ = new SurfaceForceAndMomentAlgorithmDriver(realm_, currentFrequency);
     SurfaceForceAndMomentWallFunctionAlgorithm *ppAlg
       = new SurfaceForceAndMomentWallFunctionAlgorithm(
-          realm_, partVector, theData.outputFileName_, theData.frequency_,
-          theData.parameters_, realm_.realmUsesEdges_);
+          realm_, partVector, theData.outputFileName_,
+          theData.parameters_, realm_.realmUsesEdges_, assembledArea);
     surfaceForceAndMomentAlgDriver_->algVec_.push_back(ppAlg);
+    savedFrequency = surfaceForceAndMomentAlgDriver_->get_frequency();    
+  }
+  else if ( thePhysics == "surface_force_and_moment_wall_function_projected" ) {
+    // extract appropriate frequency
+    currentFrequency = theData.frequency_;
+    ScalarFieldType *assembledArea =  &(meta_data.declare_field<ScalarFieldType>(stk::topology::NODE_RANK, "assembled_area_force_moment_wfp"));
+    stk::mesh::put_field_on_mesh(*assembledArea, stk::mesh::selectUnion(partVector), nullptr);
+    if ( nullptr == surfaceForceAndMomentAlgDriver_ )
+      surfaceForceAndMomentAlgDriver_ = new SurfaceForceAndMomentAlgorithmDriver(realm_, currentFrequency);
+    SurfaceForceAndMomentWallFunctionProjectedAlgorithm *ppAlg
+      = new SurfaceForceAndMomentWallFunctionProjectedAlgorithm(
+          realm_, partVector, theData.outputFileName_,
+          theData.parameters_, realm_.realmUsesEdges_, assembledArea, momentumEqSys_->pointInfoVec_, momentumEqSys_->wallFunctionGhosting_);
+    surfaceForceAndMomentAlgDriver_->algVec_.push_back(ppAlg);
+    savedFrequency = surfaceForceAndMomentAlgDriver_->get_frequency();
+  }
+  else {
+    throw std::runtime_error("LowMachEquationSystem::register_surface_pp_algorithm:Error() Unrecognized pp algorithm name");       
+  }
+
+  // check on frequency for surface force and moment algorithm driver; parsing design allows for multiple settings
+  if ( nullptr != surfaceForceAndMomentAlgDriver_ ) {
+    if ( savedFrequency != currentFrequency ) {
+      NaluEnv::self().naluOutputP0() << "SurfaceForceAndMoment::Warning() Multiple frequencies set for the same type of algorithm. First value will prevail: "
+                                     << savedFrequency << std::endl;
+    }
   }
 }
 
@@ -672,7 +711,6 @@ LowMachEquationSystem::solve_and_update()
     compute_dynamic_pressure();
     continuityEqSys_->compute_projected_nodal_gradient();
     continuityEqSys_->computeMdotAlgDriver_->execute();
-
     timeB = NaluEnv::self().nalu_time();
     continuityEqSys_->timerMisc_ += (timeB-timeA);
     isInit_ = false;
@@ -747,7 +785,6 @@ LowMachEquationSystem::solve_and_update()
     momentumEqSys_->compute_wall_function_params();
     timeB = NaluEnv::self().nalu_time();
     momentumEqSys_->timerMisc_ += (timeB-timeA);
-
   }
 
   // process CFL/Reynolds
@@ -886,19 +923,20 @@ MomentumEquationSystem::MomentumEquationSystem(
   EquationSystems& eqSystems)
   : EquationSystem(eqSystems, "MomentumEQS","momentum"),
     managePNG_(realm_.get_consistent_mass_matrix_png("velocity")),
-    velocity_(NULL),
-    dudx_(NULL),
-    coordinates_(NULL),
-    uTmp_(NULL),
-    visc_(NULL),
-    tvisc_(NULL),
-    evisc_(NULL),
+    velocity_(nullptr),
+    dudx_(nullptr),
+    coordinates_(nullptr),
+    uTmp_(nullptr),
+    visc_(nullptr),
+    tvisc_(nullptr),
+    evisc_(nullptr),
     assembleNodalGradAlgDriver_(new AssembleNodalGradUAlgorithmDriver(realm_, "dudx")),
     diffFluxCoeffAlgDriver_(new AlgorithmDriver(realm_)),
     tviscAlgDriver_(new AlgorithmDriver(realm_)),
     cflReyAlgDriver_(new AlgorithmDriver(realm_)),
-    wallFunctionParamsAlgDriver_(NULL),
-    projectedNodalGradEqs_(NULL),
+    wallFunctionParamsAlgDriver_(nullptr),
+    wallFunctionGhosting_(nullptr),
+    projectedNodalGradEqs_(nullptr),
     firstPNGResidual_(0.0)
 {
   // extract solver name and solver object
@@ -1373,7 +1411,7 @@ MomentumEquationSystem::register_interior_algorithm(
     if ( it_tv == tviscAlgDriver_->algMap_.end() ) {
       Algorithm * theAlg = NULL;
       switch (realm_.solutionOptions_->turbulenceModel_ ) {
-        case KSGS:
+        case KSGS: case DKSGS:
           theAlg = new TurbViscKsgsAlgorithm(realm_, part);
           break;
         case SMAGORINSKY:
@@ -1384,6 +1422,9 @@ MomentumEquationSystem::register_interior_algorithm(
           break;
         case SST: case SST_DES:
           theAlg = new TurbViscSSTAlgorithm(realm_, part);
+          break;
+        case KEPS:
+          theAlg = new TurbViscKEpsilonAlgorithm(realm_, part);
           break;
         default:
           throw std::runtime_error("non-supported turb model");
@@ -1649,10 +1690,9 @@ MomentumEquationSystem::register_wall_bc(
   const stk::topology &partTopo,
   const WallBoundaryConditionData &wallBCData)
 {
-
   // find out if this is a wall function approach
   WallUserData userData = wallBCData.userData_;
-  const bool anyWallFunctionActivated = userData.wallFunctionApproach_;
+  const bool anyWallFunctionActivated = userData.wallFunctionApproach_ || userData.wallFunctionProjectedApproach_;
 
   // push mesh part
   if ( !anyWallFunctionActivated )
@@ -1664,7 +1704,7 @@ MomentumEquationSystem::register_wall_bc(
 
   stk::mesh::MetaData &meta_data = realm_.meta_data();
   const unsigned nDim = meta_data.spatial_dimension();
-
+  
   const std::string bcFieldName = anyWallFunctionActivated ? "wall_velocity_bc" : "velocity_bc";
 
   // register boundary data; velocity_bc
@@ -1778,21 +1818,41 @@ MomentumEquationSystem::register_wall_bc(
       wallFunctionParamsAlgDriver_ = new WallFunctionParamsAlgorithmDriver(realm_);
     
     const AlgorithmType wfAlgType = WALL_FCN;
+    const AlgorithmType wfAlgProjectedType = WALL_FCN_PROJ;
     
-    // create algorithm for utau, yp and assembled nodal wall area (_WallFunction)
-    std::map<AlgorithmType, Algorithm *>::iterator it_utau =
-      wallFunctionParamsAlgDriver_->algMap_.find(wfAlgType);
-    if ( it_utau == wallFunctionParamsAlgDriver_->algMap_.end() ) {
-      ComputeWallFrictionVelocityAlgorithm *theUtauAlg =
-        new ComputeWallFrictionVelocityAlgorithm(realm_, part, realm_.realmUsesEdges_);
-      wallFunctionParamsAlgDriver_->algMap_[wfAlgType] = theUtauAlg;
+    // create algorithm for utau, yp and assembled nodal wall area, and assembled wall normal distance
+    if ( userData.wallFunctionApproach_ ) {
+      std::map<AlgorithmType, Algorithm *>::iterator it_utau =
+        wallFunctionParamsAlgDriver_->algMap_.find(wfAlgType);
+      if ( it_utau == wallFunctionParamsAlgDriver_->algMap_.end() ) {
+        ComputeWallFrictionVelocityAlgorithm *theUtauAlg =
+          new ComputeWallFrictionVelocityAlgorithm(realm_, part, realm_.realmUsesEdges_);
+        wallFunctionParamsAlgDriver_->algMap_[wfAlgType] = theUtauAlg;
+      }
+      else {
+        it_utau->second->partVec_.push_back(part);
+      }
     }
     else {
-      it_utau->second->partVec_.push_back(part);
+      // first extract projected distance
+      const double projectedDistance = userData.projectedDistance_;
+      std::map<AlgorithmType, Algorithm *>::iterator it_utau =
+        wallFunctionParamsAlgDriver_->algMap_.find(wfAlgProjectedType);
+      if ( it_utau == wallFunctionParamsAlgDriver_->algMap_.end() ) {
+        ComputeWallFrictionVelocityProjectedAlgorithm *theUtauAlg =
+          new ComputeWallFrictionVelocityProjectedAlgorithm(realm_, part, projectedDistance, realm_.realmUsesEdges_, 
+                                                            pointInfoVec_, wallFunctionGhosting_);
+        wallFunctionParamsAlgDriver_->algMap_[wfAlgProjectedType] = theUtauAlg;
+      }
+      else {
+        // push back part and projected distance
+        it_utau->second->partVec_.push_back(part);
+        it_utau->second->set_data(projectedDistance);
+      }
     }
-    
+  
     // create lhs/rhs algorithm; generalized for edge (nearest node usage) and element
-    if ( realm_.solutionOptions_->useConsolidatedBcSolverAlg_ ) {        
+    if ( realm_.solutionOptions_->useConsolidatedBcSolverAlg_ && !userData.wallFunctionProjectedApproach_) {        
       // element-based uses consolidated approach fully
       auto& solverAlgMap = solverAlgDriver_->solverAlgorithmMap_;
       
@@ -1812,21 +1872,35 @@ MomentumEquationSystem::register_wall_bc(
       }
     }
     else {
-      // deprecated element-based and supported edge-based approach
-      std::map<AlgorithmType, SolverAlgorithm *>::iterator it_wf =
-        solverAlgDriver_->solverAlgMap_.find(wfAlgType);
-      if ( it_wf == solverAlgDriver_->solverAlgMap_.end() ) {
-        SolverAlgorithm *theAlg = NULL;
-        if ( realm_.realmUsesEdges_ ) {
-          theAlg = new AssembleMomentumEdgeWallFunctionSolverAlgorithm(realm_, part, this);
+      // element-based and supported edge-based approach using non-consolidated
+      if ( userData.wallFunctionApproach_ ) {
+        std::map<AlgorithmType, SolverAlgorithm *>::iterator it_wf =
+          solverAlgDriver_->solverAlgMap_.find(wfAlgType);
+        if ( it_wf == solverAlgDriver_->solverAlgMap_.end() ) {
+          SolverAlgorithm *theAlg = NULL;
+          if ( realm_.realmUsesEdges_ ) {
+            theAlg = new AssembleMomentumEdgeWallFunctionSolverAlgorithm(realm_, part, this);
+          }
+          else {
+            theAlg = new AssembleMomentumElemWallFunctionSolverAlgorithm(realm_, part, this, realm_.realmUsesEdges_);
+          }
+          solverAlgDriver_->solverAlgMap_[wfAlgType] = theAlg;
         }
         else {
-          theAlg = new AssembleMomentumElemWallFunctionSolverAlgorithm(realm_, part, this, realm_.realmUsesEdges_);
+          it_wf->second->partVec_.push_back(part);
         }
-        solverAlgDriver_->solverAlgMap_[wfAlgType] = theAlg;
       }
       else {
-        it_wf->second->partVec_.push_back(part);
+        std::map<AlgorithmType, SolverAlgorithm *>::iterator it_wf =
+          solverAlgDriver_->solverAlgMap_.find(wfAlgProjectedType);
+        if ( it_wf == solverAlgDriver_->solverAlgMap_.end() ) {
+          AssembleMomentumElemWallFunctionProjectedSolverAlgorithm *theAlg 
+            = new AssembleMomentumElemWallFunctionProjectedSolverAlgorithm(realm_, part, this, realm_.realmUsesEdges_, pointInfoVec_, wallFunctionGhosting_);
+          solverAlgDriver_->solverAlgMap_[wfAlgProjectedType] = theAlg;
+        }
+        else {
+          it_wf->second->partVec_.push_back(part);
+        }
       }
     }
   }

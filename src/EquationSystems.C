@@ -26,6 +26,7 @@
 #include <MixtureFractionEquationSystem.h>
 #include <MixtureFractionFemEquationSystem.h>
 #include <ShearStressTransportEquationSystem.h>
+#include <KEpsilonEquationSystem.h>
 #include <MassFractionEquationSystem.h>
 #include <TurbKineticEnergyEquationSystem.h>
 #include <pmr/RadiativeTransportEquationSystem.h>
@@ -112,6 +113,13 @@ void EquationSystems::load(const YAML::Node & y_node)
           if (root()->debug()) NaluEnv::self().naluOutputP0() << "eqSys = tke/sdr " << std::endl;
           eqSys = new ShearStressTransportEquationSystem(*this);
         }
+        else if( expect_map(y_system, "KEpsilon", true) ) {
+	  y_eqsys =  expect_map(y_system, "KEpsilon", true);
+          bool outputClipDiag = false;
+          get_if_present_no_default(y_eqsys, "output_clipping_diagnostic", outputClipDiag);
+          if (root()->debug()) NaluEnv::self().naluOutputP0() << "eqSys = tke/eps " << std::endl;
+          eqSys = new KEpsilonEquationSystem(*this, outputClipDiag);
+        }
         else if( expect_map(y_system, "TurbKineticEnergy", true) ) {
 	  y_eqsys =  expect_map(y_system, "TurbKineticEnergy", true) ;
           if (root()->debug()) NaluEnv::self().naluOutputP0() << "eqSys = tke " << std::endl;
@@ -127,22 +135,22 @@ void EquationSystems::load(const YAML::Node & y_node)
         else if( expect_map(y_system, "MixtureFraction", true) ) {
 	  y_eqsys =  expect_map(y_system, "MixtureFraction", true) ;
           if (root()->debug()) NaluEnv::self().naluOutputP0() << "eqSys = mixFrac " << std::endl;
-          bool ouputClipDiag = false;
-          get_if_present_no_default(y_eqsys, "output_clipping_diagnostic", ouputClipDiag);
+          bool outputClipDiag = false;
+          get_if_present_no_default(y_eqsys, "output_clipping_diagnostic", outputClipDiag);
           double deltaZClip = 0.0;
           get_if_present_no_default(y_eqsys, "clipping_delta", deltaZClip);
-          eqSys = new MixtureFractionEquationSystem(*this, ouputClipDiag, deltaZClip);
+          eqSys = new MixtureFractionEquationSystem(*this, outputClipDiag, deltaZClip);
         }
         else if( expect_map(y_system, "MixtureFractionFEM", true) ) {
 	  y_eqsys =  expect_map(y_system, "MixtureFractionFEM", true) ;
           if (root()->debug()) NaluEnv::self().naluOutputP0() << "eqSys = mixFracFEM " << std::endl;
-          bool ouputClipDiag = false;
-          get_if_present_no_default(y_eqsys, "output_clipping_diagnostic", ouputClipDiag);
+          bool outputClipDiag = false;
+          get_if_present_no_default(y_eqsys, "output_clipping_diagnostic", outputClipDiag);
           double deltaZClip = 0.0;
           get_if_present_no_default(y_eqsys, "clipping_delta", deltaZClip);
           bool computePNG = false;
           get_if_present_no_default(y_eqsys, "compute_png", computePNG);
-          eqSys = new MixtureFractionFemEquationSystem(*this, ouputClipDiag, deltaZClip, computePNG);
+          eqSys = new MixtureFractionFemEquationSystem(*this, outputClipDiag, deltaZClip, computePNG);
         }
         else if( expect_map(y_system, "Enthalpy", true) ) {
 	  y_eqsys =  expect_map(y_system, "Enthalpy", true);
@@ -151,9 +159,9 @@ void EquationSystems::load(const YAML::Node & y_node)
           double maxT = 3000.0;
           get_if_present_no_default(y_eqsys, "minimum_temperature", minT);
           get_if_present_no_default(y_eqsys, "maximum_temperature", maxT);
-          bool ouputClipDiag = true;
-          get_if_present_no_default(y_eqsys, "output_clipping_diagnostic", ouputClipDiag);
-          eqSys = new EnthalpyEquationSystem(*this, minT, maxT, ouputClipDiag);
+          bool outputClipDiag = true;
+          get_if_present_no_default(y_eqsys, "output_clipping_diagnostic", outputClipDiag);
+          eqSys = new EnthalpyEquationSystem(*this, minT, maxT, outputClipDiag);
         }
         else if( expect_map(y_system, "HeatConduction", true) ) {
 	  y_eqsys =  expect_map(y_system, "HeatConduction", true);
@@ -485,38 +493,38 @@ EquationSystems::register_symmetry_bc(
 //--------------------------------------------------------------------------
 void
 EquationSystems::register_periodic_bc(
-  const std::string targetNameMaster,
-  const std::string targetNameSlave,
+  const std::string targetNameMonarch,
+  const std::string targetNameSubject,
   const PeriodicBoundaryConditionData &periodicBCData)
 {
   stk::mesh::MetaData &meta_data = realm_.meta_data();
 
-  stk::mesh::Part *masterMeshPart= meta_data.get_part(targetNameMaster);
-  stk::mesh::Part *slaveMeshPart= meta_data.get_part(targetNameSlave);
-  if ( NULL == masterMeshPart) {
-    NaluEnv::self().naluOutputP0() << "Sorry, no part name found by the name " << targetNameMaster << std::endl;
+  stk::mesh::Part *monarchMeshPart= meta_data.get_part(targetNameMonarch);
+  stk::mesh::Part *subjectMeshPart= meta_data.get_part(targetNameSubject);
+  if ( NULL == monarchMeshPart) {
+    NaluEnv::self().naluOutputP0() << "Sorry, no part name found by the name " << targetNameMonarch << std::endl;
     throw std::runtime_error("EquationSystems::fatal_error()");
   }
-  else if ( NULL == slaveMeshPart) {
-    NaluEnv::self().naluOutputP0() << "Sorry, no part name found by the name " << targetNameSlave << std::endl;
+  else if ( NULL == subjectMeshPart) {
+    NaluEnv::self().naluOutputP0() << "Sorry, no part name found by the name " << targetNameSubject << std::endl;
     throw std::runtime_error("EquationSystems::fatal_error()");
   }
   else {
     // error check on size of subsets
-    const std::vector<stk::mesh::Part*> & masterMeshParts = masterMeshPart->subsets();
-    const std::vector<stk::mesh::Part*> & slaveMeshParts = slaveMeshPart->subsets();
+    const std::vector<stk::mesh::Part*> & monarchMeshParts = monarchMeshPart->subsets();
+    const std::vector<stk::mesh::Part*> & subjectMeshParts = subjectMeshPart->subsets();
 
-    if ( masterMeshParts.size() != slaveMeshParts.size())
-      NaluEnv::self().naluOutputP0() << "Mesh part subsets for master slave do not match in size" << std::endl;
+    if ( monarchMeshParts.size() != subjectMeshParts.size())
+      NaluEnv::self().naluOutputP0() << "Mesh part subsets for monarch/subject do not match in size" << std::endl;
 
-    if ( masterMeshParts.size() > 1 )
+    if ( monarchMeshParts.size() > 1 )
       NaluEnv::self().naluOutputP0() << "Surface has subsets active; please make sure that the topologies match" << std::endl;
 
     // extract data and search tolerance
     PeriodicUserData userData = periodicBCData.userData_;
     const double searchTolerance = userData.searchTolerance_;
     const std::string searchMethodName = userData.searchMethodName_;
-    realm_.register_periodic_bc(masterMeshPart, slaveMeshPart, searchTolerance, searchMethodName);
+    realm_.register_periodic_bc(monarchMeshPart, subjectMeshPart, searchTolerance, searchMethodName);
   }
 }
 
@@ -593,7 +601,7 @@ EquationSystems::register_overset_bc(
 }
 
 //--------------------------------------------------------------------------
-//-------- register_surface_pp_algorithm ----------------------
+//-------- register_surface_pp_algorithm -----------------------------------
 //--------------------------------------------------------------------------
 void
 EquationSystems::register_surface_pp_algorithm(

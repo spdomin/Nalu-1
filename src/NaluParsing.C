@@ -209,9 +209,9 @@ namespace sierra
     {
       periodicBC.bcName_ =
           node["periodic_boundary_condition"].as<std::string>();
-      periodicBC.masterSlave_ = node["target_name"].as<MasterSlave>();
-      periodicBC.targetName_ = periodicBC.masterSlave_.master_ + "_"
-          + periodicBC.masterSlave_.slave_;
+      periodicBC.monarchSubject_ = node["target_name"].as<MonarchSubject>();
+      periodicBC.targetName_ = periodicBC.monarchSubject_.monarch_ + "_"
+          + periodicBC.monarchSubject_.subject_;
       periodicBC.theBcType_ = PERIODIC_BC;
       const YAML::Node& periodicUserData = node["periodic_user_data"];
       periodicBC.userData_ = periodicUserData.as<PeriodicUserData>();
@@ -585,6 +585,19 @@ namespace YAML
     return true;
   }
 
+  bool convert<sierra::nalu::TurbDiss>::decode(const Node& node,
+    sierra::nalu::TurbDiss& eps)
+  {
+    if (!node.IsScalar())
+    {
+      return false;
+    }
+
+    eps.turbDiss_ = node.as<double>();
+
+    return true;
+  }
+
   bool convert<sierra::nalu::Temperature>::decode(const Node& node,
     sierra::nalu::Temperature& t)
   {
@@ -850,11 +863,13 @@ namespace YAML
     {
       wallData.wallFunctionApproach_ = node["use_wall_function"].as<bool>();
     }
-    if (node["use_abl_wall_function"])
+    if (node["use_wall_function_projected"]) 
     {
-      wallData.wallFunctionApproach_ = node["use_abl_wall_function"].as<bool>();
-      wallData.ablWallFunctionApproach_ =
-          node["use_abl_wall_function"].as<bool>();
+      wallData.wallFunctionProjectedApproach_ = node["use_wall_function_projected"].as<bool>();
+    }
+    if (node["projected_distance"]) 
+    {
+      wallData.projectedDistance_ = node["projected_distance"].as<double>();
     }
     if (node["pressure"])
     {
@@ -872,6 +887,12 @@ namespace YAML
     {
       throw std::runtime_error(
         "specific_dissipation rate at walls is provided by a model, not the user");
+    }
+
+    if (node["turbulent_dissipation"])
+    {
+      throw std::runtime_error(
+        "turbulent_dissipation at walls is provided by a model, not the user");
     }
 
     if (node["heat_flux"])
@@ -918,8 +939,8 @@ namespace YAML
 
   }
 
-  bool convert<sierra::nalu::MasterSlave>::decode(const Node& node,
-    sierra::nalu::MasterSlave& ms)
+  bool convert<sierra::nalu::MonarchSubject>::decode(const Node& node,
+    sierra::nalu::MonarchSubject& ms)
   {
 
     if (!node.IsSequence() || node.size() != 2)
@@ -927,8 +948,8 @@ namespace YAML
       return false;
     }
 
-    ms.master_ = node[0].as<std::string>();
-    ms.slave_ = node[1].as<std::string>();
+    ms.monarch_ = node[0].as<std::string>();
+    ms.subject_ = node[1].as<std::string>();
 
     return true;
   }
@@ -952,6 +973,12 @@ namespace YAML
       inflowData.sdr_ = node["specific_dissipation_rate"].as<
           sierra::nalu::SpecDissRate>();
       inflowData.sdrSpec_ = true;
+    }
+    if (node["turbulent_dissipation"])
+    {
+      inflowData.eps_ = node["turbulent_dissipation"].as<
+          sierra::nalu::TurbDiss>();
+      inflowData.epsSpec_ = true;
     }
     if (node["mixture_fraction"])
     {
@@ -1028,6 +1055,12 @@ namespace YAML
       openData.sdr_ = node["specific_dissipation_rate"].as<
           sierra::nalu::SpecDissRate>();
       openData.sdrSpec_ = true;
+    }
+    if (node["turbulent_dissipation_"])
+    {
+      openData.eps_ = node["turbulent_dissipation"].as<
+          sierra::nalu::TurbDiss>();
+      openData.epsSpec_ = true;
     }
     if (node["pressure"])
     {

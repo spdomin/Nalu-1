@@ -326,7 +326,7 @@ SpecificDissipationRateEquationSystem::register_interior_algorithm(
         }
         break;
       default:
-        throw std::runtime_error("Unsupported turbulence model in TurbKe: only SST and SST_DES supported");
+        throw std::runtime_error("Unsupported turbulence model in SpecificDR: only SST and SST_DES supported");
       }
       theAlg->supplementalAlg_.push_back(theSrc);
 
@@ -867,7 +867,7 @@ SpecificDissipationRateEquationSystem::compute_wall_model_parameters()
   // periodic assemble
   if ( realm_.hasPeriodic_) {
     const unsigned fieldSize = 1;
-    const bool bypassFieldCheck = false; // fields are not defined at all slave/master node pairs
+    const bool bypassFieldCheck = false;
     realm_.periodic_field_update(assembledWallSdr_, fieldSize, bypassFieldCheck);
     realm_.periodic_field_update(assembledWallArea_, fieldSize, bypassFieldCheck);
   }
